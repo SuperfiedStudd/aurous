@@ -166,6 +166,30 @@ export const CreatedObjectSchema = z
     ...(url === null || url === undefined ? {} : { url }),
   }));
 
+export interface SkippedAction {
+  actionId: string;
+  type: string;
+  name: string;
+  reason: string;
+  externalId?: string;
+  url?: string;
+}
+
+export const SkippedActionSchema = z
+  .object({
+    actionId: z.string(),
+    type: z.string(),
+    name: z.string(),
+    reason: z.string(),
+    externalId: z.string().nullish(),
+    url: z.string().url().nullish(),
+  })
+  .transform<SkippedAction>(({ externalId, url, ...action }) => ({
+    ...action,
+    ...(externalId === null || externalId === undefined ? {} : { externalId }),
+    ...(url === null || url === undefined ? {} : { url }),
+  }));
+
 export interface ExecutionFailure {
   actionId?: string;
   code: string;
@@ -208,7 +232,9 @@ export const ExecutionResultSchema = z.object({
   status: z.enum(['succeeded', 'partial', 'failed', 'cancelled']),
   summary: z.string(),
   createdObjects: z.array(CreatedObjectSchema),
+  skippedActions: z.array(SkippedActionSchema).optional(),
   completedActionIds: z.array(z.string()),
+  compatibilityNotes: z.array(z.string()).optional(),
   warnings: z.array(z.string()),
   failures: z.array(ExecutionFailureSchema),
   startedAt: z.string().datetime(),
@@ -227,6 +253,22 @@ const ExecutionResponseCreatedObjectSchema = z
   .strict()
   .transform<CreatedObject>(({ externalId, url, ...object }) => ({
     ...object,
+    ...(externalId === null ? {} : { externalId }),
+    ...(url === null ? {} : { url }),
+  }));
+
+const ExecutionResponseSkippedActionSchema = z
+  .object({
+    actionId: z.string(),
+    type: z.string(),
+    name: z.string(),
+    reason: z.string(),
+    externalId: z.string().nullable(),
+    url: z.string().nullable(),
+  })
+  .strict()
+  .transform<SkippedAction>(({ externalId, url, ...action }) => ({
+    ...action,
     ...(externalId === null ? {} : { externalId }),
     ...(url === null ? {} : { url }),
   }));
@@ -252,7 +294,9 @@ const ExecutionResultResponseTransportSchema = z
     status: z.enum(['succeeded', 'partial', 'failed', 'cancelled']),
     summary: z.string(),
     createdObjects: z.array(ExecutionResponseCreatedObjectSchema),
+    skippedActions: z.array(ExecutionResponseSkippedActionSchema).default([]),
     completedActionIds: z.array(z.string()),
+    compatibilityNotes: z.array(z.string()).default([]),
     warnings: z.array(z.string()),
     failures: z.array(ExecutionResponseFailureSchema),
     startedAt: z.string(),
@@ -264,7 +308,9 @@ const ExecutionResultBoundarySchema = z.object({
   status: z.enum(['succeeded', 'partial', 'failed', 'cancelled']),
   summary: z.string(),
   createdObjects: z.array(CreatedObjectSchema),
+  skippedActions: z.array(SkippedActionSchema).default([]),
   completedActionIds: z.array(z.string()),
+  compatibilityNotes: z.array(z.string()).default([]),
   warnings: z.array(z.string()),
   failures: z.array(
     z

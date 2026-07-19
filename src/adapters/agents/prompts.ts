@@ -51,13 +51,15 @@ export function buildExecutionPrompt(plan: AurousPlan, productivity: Productivit
 EXECUTION SAFETY RULES:
 - The plan JSON below is the complete allowlist. Do not create, update, link, delete, or configure anything not represented by its plannedActions.
 - Never expand scope, even if discovery suggests helpful extra work.
-- Do not reinterpret action names or properties. If an action cannot be completed exactly, report a failure for that action.
+- Do not reinterpret action names or properties. Tool-specific guidance may authorize narrowly scoped exact-target deduplication or disclosed compatibility adjustments; otherwise report a failure for any action that cannot be completed exactly.
 - Do not access local project files; all required information is in the approved plan.
 - Never request or expose credentials. Use only the user's existing configured MCP.
 - Report partial success precisely: completedActionIds and createdObjects must correspond to approved action IDs.
+- skippedActions must contain only approved actions satisfied by an exact compatible existing object. Include its real ID and URL when returned.
+- compatibilityNotes must name every unsupported or adjusted field. Use an empty array when there were no adjustments.
 - Use stable AUR-MCP-### or AUR-APPLY-### failure codes.
 - Every failure code must match AUR-<SINGLE-UPPERCASE-CATEGORY>-<3 DIGITS> exactly. Never add another segment or replace the three digits with a word.
-- Include externalId and url on every created object, using null when unavailable. Include actionId on every failure, using null only for a run-wide failure.
+- Include externalId and url on every created or skipped object, using null only when the MCP truly did not return it. Include actionId on every failure, using null only for a run-wide failure.
 
 Tool execution guidance:
 ${productivity.executionInstructions(plan)}

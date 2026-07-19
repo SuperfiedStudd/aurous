@@ -39,6 +39,19 @@ aurous diagnose <run-id>
 
 `plan` prints the context summary before any live agent is invoked. `apply` reloads the saved plan, previews its exact actions, and requires confirmation (`--yes` is an explicit confirmation for automation).
 
+## Linear Build Week demo
+
+The polished Linear path uses a small structured launch preset and runs context loading, deterministic planning, full preview, approval, official Linear MCP execution, and the completion summary in one command:
+
+```bash
+npm run dev -- linear-demo \
+  --agent codex \
+  --team JasjyotSingh \
+  --context demo/linear-build-week.json
+```
+
+Type `apply` only after reviewing every project, label, milestone, and issue property. For a rehearsed noninteractive run, `--yes` is the explicit approval. Exact-name checks are limited to approved targets so repeated runs skip compatible existing objects instead of duplicating them where practical. The saved result distinguishes created objects, skipped actions, compatibility notes, warnings, and failures, and prints returned Linear IDs and URLs.
+
 If an apply ends `partial` after recording external object IDs, generate a separate read-only recovery plan before attempting more writes:
 
 ```bash
@@ -58,6 +71,7 @@ Recovery has no `--yes` bypass. It fetches only persisted external IDs, never se
 | `aurous doctor [--verbose]`            | Check runtime, agent installations, auth, and MCP readiness            |
 | `aurous plan ...`                      | Read only the provided context paths and create a validated saved plan |
 | `aurous apply <run-id> [--yes]`        | Approve and execute exactly one saved plan                             |
+| `aurous linear-demo ...`               | Run the context-to-Linear demo with one preview and approval flow      |
 | `aurous recover <run-id> [--apply]`    | Reconcile a partial run read-only or approve its saved recovery plan   |
 | `aurous runs`                          | List local runs and statuses                                           |
 | `aurous diagnose <run-id> [--verbose]` | Print a redacted, shareable diagnostic report                          |

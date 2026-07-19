@@ -1,0 +1,97 @@
+{
+  "preset": "linear-software-launch-v1",
+  "projectName": "Aurous — Build Week Launch",
+  "summary": "Ship a fast, approval-gated Aurous demo that turns shared project context into a useful Linear workspace.",
+  "currentPhase": "Build Week demo hardening",
+  "targetDate": "2026-07-21",
+  "goals": [
+    "Prove context-to-Linear setup in one polished command.",
+    "Show every intended write before approval.",
+    "Persist exact Linear IDs, URLs, skips, and compatibility diagnostics."
+  ],
+  "milestones": [
+    {
+      "name": "Integration Ready",
+      "description": "The deterministic plan, preview, MCP execution, and normalized result path work end to end.",
+      "targetDate": "2026-07-20"
+    },
+    {
+      "name": "Demo Ready",
+      "description": "The live workspace and screen-recording flow are concise, convincing, and regression checked.",
+      "targetDate": "2026-07-21"
+    }
+  ],
+  "workstreams": [
+    {
+      "name": "Linear Integration",
+      "label": "Integration",
+      "outcome": "A deterministic, approval-gated path through the official Linear MCP."
+    },
+    {
+      "name": "Demo Experience",
+      "label": "Demo",
+      "outcome": "A polished terminal narrative and a visually useful Linear project."
+    }
+  ],
+  "knownTasks": [
+    {
+      "title": "Lock the Linear demo contract",
+      "description": "Define the exact supported project, label, milestone, issue, preview, approval, and result behavior.",
+      "priority": "urgent",
+      "status": "in-progress",
+      "milestone": "Integration Ready",
+      "workstream": "Linear Integration"
+    },
+    {
+      "title": "Generate the deterministic Linear setup plan",
+      "description": "Translate the structured launch context into explicit, dependency-ordered Linear actions.",
+      "priority": "urgent",
+      "status": "todo",
+      "milestone": "Integration Ready",
+      "workstream": "Linear Integration"
+    },
+    {
+      "title": "Execute approved actions through the Linear MCP",
+      "description": "Create only approved objects, using exact-target deduplication before every write.",
+      "priority": "urgent",
+      "status": "todo",
+      "milestone": "Integration Ready",
+      "workstream": "Linear Integration"
+    },
+    {
+      "title": "Persist exact Linear IDs, URLs, and diagnostics",
+      "description": "Normalize created and skipped objects into the Aurous run result with compatibility notes.",
+      "priority": "high",
+      "status": "todo",
+      "milestone": "Integration Ready",
+      "workstream": "Linear Integration"
+    },
+    {
+      "title": "Run Linear E2E and Notion regression checks",
+      "description": "Verify the real Linear path and confirm the existing Notion behavior remains unchanged.",
+      "priority": "high",
+      "status": "todo",
+      "milestone": "Demo Ready",
+      "workstream": "Demo Experience"
+    },
+    {
+      "title": "Record the Build Week launch walkthrough",
+      "description": "Capture the one-command preview, approval, write, and polished completion summary.",
+      "priority": "high",
+      "status": "todo",
+      "milestone": "Demo Ready",
+      "workstream": "Demo Experience"
+    }
+  ],
+  "risks": [
+    "A remote write may succeed before an interrupted agent returns its object ID.",
+    "A workspace-specific status or field may differ from the demo convention.",
+    "Repeated rehearsals could create duplicates without exact-target checks."
+  ],
+  "preferredWorkflow": {
+    "todoStatus": "Todo",
+    "activeStatus": "In Progress",
+    "assignee": "me",
+    "labelPrefix": "Aurous"
+  }
+}

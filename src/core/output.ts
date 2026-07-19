@@ -42,11 +42,14 @@ export function formatPlan(plan: AurousPlan): string {
     ),
     '',
     'Exact approved actions:',
-    ...plan.plannedActions.map(
-      (action) =>
-        `  ${action.id}  ${action.operation} ${action.objectType} "${action.target}" — ${action.description}`,
-    ),
   ];
+  for (const action of plan.plannedActions) {
+    lines.push(
+      `  ${action.id}  ${action.operation} ${action.objectType} "${action.target}" — ${action.description}`,
+    );
+    for (const property of action.properties) lines.push(`    ${property.key}: ${property.value}`);
+    if (action.dependsOn.length > 0) lines.push(`    depends on: ${action.dependsOn.join(', ')}`);
+  }
   if (plan.assumptions.length > 0)
     lines.push('', 'Assumptions:', ...plan.assumptions.map((item) => `  - ${item}`));
   if (plan.warnings.length > 0)
@@ -64,9 +67,20 @@ export function formatExecutionResult(result: ExecutionResult): string {
     `Apply ${result.status.toUpperCase()}: ${result.summary}`,
     `  Completed actions: ${result.completedActionIds.length}`,
     `  Created objects: ${result.createdObjects.length}`,
+    `  Skipped actions: ${result.skippedActions?.length ?? 0}`,
+    `  Compatibility notes: ${result.compatibilityNotes?.length ?? 0}`,
   ];
-  for (const object of result.createdObjects)
-    lines.push(`  + ${object.type}: ${object.name}${object.url ? ` (${object.url})` : ''}`);
+  for (const object of result.createdObjects) {
+    lines.push(`  + ${object.type}: ${object.name}`);
+    lines.push(`    ID: ${object.externalId ?? '(not returned)'}`);
+    lines.push(`    URL: ${object.url ?? '(not returned)'}`);
+  }
+  for (const action of result.skippedActions ?? []) {
+    lines.push(`  = skipped ${action.type}: ${action.name} — ${action.reason}`);
+    if (action.externalId) lines.push(`    Existing ID: ${action.externalId}`);
+    if (action.url) lines.push(`    Existing URL: ${action.url}`);
+  }
+  for (const note of result.compatibilityNotes ?? []) lines.push(`  ~ compatibility: ${note}`);
   for (const warning of result.warnings) lines.push(`  ! ${warning}`);
   for (const failure of result.failures)
     lines.push(`  X ${failure.code}: ${failure.summary}\n    Next: ${failure.nextAction}`);

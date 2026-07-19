@@ -220,12 +220,7 @@ export class CodexAgentAdapter implements AgentAdapter {
       encoding: 'utf8',
       mode: 0o600,
     });
-    const args = buildCodexInvocationArgs(
-      phase,
-      schemaPath,
-      outputPath,
-      'recoveryPlan' in input ? input.recoveryPlan.tool : undefined,
-    );
+    const args = buildCodexInvocationArgs(phase, schemaPath, outputPath, executionTool(input));
     const started = Date.now();
     let result;
     try {
@@ -315,18 +310,34 @@ export function buildCodexInvocationArgs(
   phase: AgentPhase,
   schemaPath: string,
   outputPath: string,
-  recoveryTool?: 'notion' | 'linear' | 'mock',
+  executionTool?: 'notion' | 'linear' | 'mock',
 ): string[] {
   const args = ['exec', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only'];
-  if (phase === 'recover-apply' && recoveryTool && recoveryTool !== 'mock') {
+  if (
+    (phase === 'apply' || phase === 'recover-apply') &&
+    executionTool &&
+    executionTool !== 'mock'
+  ) {
     args.push(
       '--strict-config',
       '--config',
-      `mcp_servers.${recoveryTool}.default_tools_approval_mode="approve"`,
+      `mcp_servers.${executionTool}.default_tools_approval_mode="approve"`,
     );
   }
   args.push('--output-schema', schemaPath, '--output-last-message', outputPath, '-');
   return args;
+}
+
+function executionTool(
+  input:
+    | PlanGenerationInput
+    | PlanExecutionInput
+    | RecoveryInspectionInput
+    | RecoveryActionExecutionInput,
+): 'notion' | 'linear' | 'mock' | undefined {
+  if ('plan' in input) return input.plan.tool;
+  if ('recoveryPlan' in input) return input.recoveryPlan.tool;
+  return undefined;
 }
 
 async function normalizeExecutionInvocation(

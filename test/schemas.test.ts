@@ -112,6 +112,44 @@ describe('Codex structured-output JSON schemas', () => {
     expect(result.failures[0]).not.toHaveProperty('actionId');
   });
 
+  it('normalizes Linear skips and preserves explicit compatibility notes', () => {
+    const parsed = parseExecutionResultResponse({
+      status: 'succeeded',
+      summary: 'Existing project reused and one compatibility adjustment recorded.',
+      createdObjects: [],
+      skippedActions: [
+        {
+          actionId: 'action-001',
+          type: 'project',
+          name: 'Aurous — Build Week Launch',
+          reason: 'One exact compatible match already exists in the approved team.',
+          externalId: 'project-id',
+          url: 'https://linear.app/example/project/project-id',
+        },
+      ],
+      completedActionIds: ['action-001'],
+      compatibilityNotes: ['Requested Todo resolved to the team status with exact name Todo.'],
+      warnings: [],
+      failures: [],
+      startedAt: '2026-07-19T12:00:00.000Z',
+      finishedAt: '2026-07-19T12:00:01.000Z',
+    });
+
+    expect(parsed.result.skippedActions).toEqual([
+      {
+        actionId: 'action-001',
+        type: 'project',
+        name: 'Aurous — Build Week Launch',
+        reason: 'One exact compatible match already exists in the approved team.',
+        externalId: 'project-id',
+        url: 'https://linear.app/example/project/project-id',
+      },
+    ]);
+    expect(parsed.result.compatibilityNotes).toEqual([
+      'Requested Todo resolved to the team status with exact name Todo.',
+    ]);
+  });
+
   it('normalizes the captured malformed action-003 failure without discarding its result', async () => {
     const captured = JSON.parse(
       await readFile(

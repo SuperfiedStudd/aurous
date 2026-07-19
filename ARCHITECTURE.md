@@ -22,9 +22,10 @@ explicit paths -> guarded context ingestion -> context preview
 
 ## Modules
 
-- `src/cli.ts` defines the seven user commands and terminal confirmation.
+- `src/cli.ts` defines the user commands and terminal confirmation.
 - `src/core/context.ts` is the path allowlist and context budget boundary.
 - `src/domain/schemas.ts` and `src/domain/recovery.ts` define versioned Zod contracts for plans, results, runs, diagnostics, exact-ID inspection, recovery classifications, and checkpoints.
+- `src/domain/linear-demo.ts` validates the minimal structured demo context and deterministically maps it to an explicit Linear plan.
 - `src/core/services.ts` owns plan/apply/recovery state transitions and scope validation.
 - `src/core/run-store.ts` implements the `RunStore` interface with atomic, permission-restricted local JSON files. A future shared-state implementation can satisfy this interface without changing command orchestration.
 - `src/adapters/agents/` contains the shared `AgentAdapter` contract and Codex, Claude Code, and mock implementations.
@@ -56,6 +57,8 @@ Planning sends an embedded copy of selected context to the chosen local agent. I
 Codex transport schemas use the strict Structured Outputs subset: every object is closed, every declared key is required, and application-optional values are nullable. Boundary Zod schemas remove those nulls before persistence. Planned action configuration is transported as a strict list of unique string `{key, value}` entries; namespaced keys and JSON-encoded list values preserve Notion and Linear detail without an unsupported free-form object.
 
 Apply loads `plan.json`; it never regenerates the plan. Approved action IDs are an allowlist. The result is rejected if it references any unknown action ID. Adapter prompts prohibit discovery and scope expansion, and failures become a saved `result.json` plus stable `AUR-*` events.
+
+`linear-demo` is the deadline-focused preset path. It saves the same standard run artifacts, but replaces agent-generated planning with a deterministic translation of the selected `linear-software-launch-v1` context. Its execution contract permits only exact-target, team/project-scoped deduplication. Created objects, skipped exact matches, compatibility notes, exact IDs, and URLs are normalized into the standard result before persistence.
 
 ## Partial-run recovery contract
 

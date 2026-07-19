@@ -102,6 +102,36 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     });
 
   program
+    .command('linear-demo')
+    .description('Plan, preview, approve, and execute the polished Linear demo in one command.')
+    .option('--agent <agent>', 'agent: codex, claude, or mock')
+    .requiredOption('--team <team>', 'existing Linear team name, key, or UUID')
+    .requiredOption('--context <paths...>', 'structured Linear demo preset context')
+    .option('--yes', 'explicitly confirm the printed preview for noninteractive use')
+    .action(async (options: { agent?: string; team: string; context: string[]; yes?: boolean }) => {
+      const controller = cancellationController();
+      const plan = await services.planLinearDemo({
+        ...(options.agent ? { agent: options.agent } : {}),
+        team: options.team,
+        contextPaths: options.context,
+      });
+      await services.apply(plan.runId, {
+        confirmed: Boolean(options.yes),
+        alreadyPreviewed: true,
+        ...(!options.yes
+          ? {
+              confirm: () =>
+                confirm(
+                  'Execute exactly this Linear plan through the official MCP? Type "apply" to confirm: ',
+                  'apply',
+                ),
+            }
+          : {}),
+        signal: controller.signal,
+      });
+    });
+
+  program
     .command('recover <run-id>')
     .description(
       'Inspect a partial run read-only, or explicitly apply a separately saved recovery plan.',

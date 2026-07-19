@@ -20,6 +20,7 @@ import {
   type ExecutionResult,
   type RunRecord,
 } from '../domain/schemas.js';
+import { buildLinearDemoPlan, parseLinearDemoContext } from '../domain/linear-demo.js';
 import {
   RecoveryInspectionSchema,
   buildRecoveryPlan,
@@ -61,7 +62,14 @@ export interface PlanOptions {
 export interface ApplyOptions {
   confirmed: boolean;
   confirm?: () => Promise<boolean>;
+  alreadyPreviewed?: boolean;
   signal?: AbortSignal;
+}
+
+export interface LinearDemoPlanOptions {
+  agent?: string;
+  team: string;
+  contextPaths: string[];
 }
 
 export interface RecoverOptions {
@@ -256,6 +264,131 @@ export class AurousServices {
     }
   }
 
+  async planLinearDemo(options: LinearDemoPlanOptions): Promise<AurousPlan> {
+    const config = await this.dependencies.store.loadConfig();
+    const agentName = AgentNameSchema.parse(options.agent ?? config.defaultAgent);
+    const team = options.team.trim();
+    if (!team) {
+      throw new AurousError({
+        code: 'AUR-LINEAR-003',
+        summary: 'The Linear demo team cannot be empty.',
+        probableCause: 'The --team value was blank.',
+        nextAction: 'Pass an existing Linear team name, key, or UUID with --team.',
+      });
+    }
+    const context = await ingestContext({
+      cwd: this.dependencies.workspace,
+      paths: options.contextPaths,
+    });
+    const preset = parseLinearDemoContext(context);
+    this.dependencies.output.log(formatContextSummary(context.summary));
+    this.dependencies.output.log(
+      `\nLinear demo preset: ${preset.preset}\nDestination team: ${team}\nGenerating a deterministic read-only plan...`,
+    );
+
+    const runId = createRunId(this.now());
+    const timestamp = this.now().toISOString();
+    const generatedPlan = buildLinearDemoPlan({
+      runId,
+      createdAt: timestamp,
+      agent: agentName,
+      team,
+      context,
+      preset,
+    });
+    const plan = AurousPlanSchema.parse(
+      await this.attachKnownLinearReferences(generatedPlan, team),
+    );
+    validateProposalSemantics(plan);
+    const record: RunRecord = {
+      runId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      status: 'planning',
+      agent: agentName,
+      tool: 'linear',
+      objective: plan.objective,
+      approvedContextPaths: context.summary.approvedPaths,
+      runKind: 'standard',
+    };
+    await this.dependencies.store.createRun(record, context);
+    await this.dependencies.store.savePlan(plan);
+    await this.dependencies.store.updateStatus(runId, 'planned');
+    await this.event(runId, 'info', 'AUR-LINEAR-100', 'Deterministic Linear demo plan saved.', {
+      preset: preset.preset,
+      team,
+      actionCount: plan.plannedActions.length,
+      milestoneCount: preset.milestones.length,
+      issueCount: preset.knownTasks.length,
+      knownReferenceCount: plan.plannedActions.filter((action) =>
+        action.properties.some((property) => property.key === 'linear.dedupe.knownExternalId'),
+      ).length,
+    });
+    this.dependencies.output.log(`\n${formatPlan(plan)}`);
+    return plan;
+  }
+
+  private async attachKnownLinearReferences(plan: AurousPlan, team: string): Promise<AurousPlan> {
+    const references = new Map<string, { externalId: string; url?: string }>();
+    const records = (await this.dependencies.store.listRuns()).reverse();
+    for (const record of records) {
+      if (
+        record.tool !== 'linear' ||
+        record.agent !== plan.agent ||
+        record.status !== 'succeeded' ||
+        record.objective !== plan.objective
+      )
+        continue;
+      try {
+        const [priorPlan, result] = await Promise.all([
+          this.dependencies.store.loadPlan(record.runId),
+          this.dependencies.store.loadResult(record.runId),
+        ]);
+        if (!result || linearPlanTeam(priorPlan) !== team) continue;
+        for (const reference of [...result.createdObjects, ...(result.skippedActions ?? [])]) {
+          if (!reference.externalId) continue;
+          const priorAction = priorPlan.plannedActions.find(
+            (action) => action.id === reference.actionId,
+          );
+          if (
+            !priorAction ||
+            priorAction.target !== reference.name ||
+            priorAction.objectType !== reference.type
+          )
+            continue;
+          const key = `${reference.type}\u0000${reference.name}`;
+          if (!references.has(key))
+            references.set(key, {
+              externalId: reference.externalId,
+              ...(reference.url ? { url: reference.url } : {}),
+            });
+        }
+      } catch {
+        // A malformed or incomplete historical run is not trusted as an identity source.
+      }
+    }
+    if (references.size === 0) return plan;
+    return {
+      ...plan,
+      plannedActions: plan.plannedActions.map((action) => {
+        const reference = references.get(`${action.objectType}\u0000${action.target}`);
+        if (!reference) return action;
+        return {
+          ...action,
+          properties: [
+            ...action.properties,
+            { key: 'linear.dedupe.knownExternalId', value: reference.externalId },
+            ...(reference.url ? [{ key: 'linear.dedupe.knownUrl', value: reference.url }] : []),
+          ],
+        };
+      }),
+      assumptions: [
+        ...plan.assumptions,
+        'Exact external IDs from the earliest compatible successful Aurous run will be fetched and verified before any fallback lookup.',
+      ],
+    };
+  }
+
   async apply(runId: string, options: ApplyOptions): Promise<ExecutionResult | undefined> {
     const [record, plan, config] = await Promise.all([
       this.dependencies.store.getRun(runId),
@@ -280,7 +413,7 @@ export class AurousServices {
         runId,
       });
     }
-    this.dependencies.output.log(formatPlan(plan));
+    if (!options.alreadyPreviewed) this.dependencies.output.log(formatPlan(plan));
     const confirmed = options.confirmed || (options.confirm ? await options.confirm() : false);
     if (!confirmed) {
       await this.event(
@@ -323,7 +456,10 @@ export class AurousServices {
         invocation.stdout,
         invocation.stderr,
       );
-      const result = ExecutionResultSchema.parse(invocation.value);
+      const result = normalizeExecutionCompatibility(
+        plan,
+        ExecutionResultSchema.parse(invocation.value),
+      );
       validateExecutionScope(plan, result);
       await this.dependencies.store.saveResult(runId, result);
       await this.dependencies.store.updateStatus(runId, result.status);
@@ -337,6 +473,9 @@ export class AurousServices {
           durationMs: invocation.durationMs,
           status: result.status,
           completedActionIds: result.completedActionIds,
+          createdObjectCount: result.createdObjects.length,
+          skippedActionCount: result.skippedActions?.length ?? 0,
+          compatibilityNoteCount: result.compatibilityNotes?.length ?? 0,
         },
       );
       this.dependencies.output.log(formatExecutionResult(result));
@@ -357,7 +496,9 @@ export class AurousServices {
         status: finalStatus,
         summary: classified.message,
         createdObjects: [],
+        skippedActions: [],
         completedActionIds: [],
+        compatibilityNotes: [],
         warnings: [],
         failures: [
           {
@@ -1128,6 +1269,7 @@ function validateExecutionScope(plan: AurousPlan, result: ExecutionResult): void
   const referenced = [
     ...result.completedActionIds,
     ...result.createdObjects.map((object) => object.actionId),
+    ...(result.skippedActions ?? []).map((action) => action.actionId),
     ...result.failures.flatMap((failure) => (failure.actionId ? [failure.actionId] : [])),
   ];
   if (referenced.some((actionId) => !approved.has(actionId))) {
@@ -1140,6 +1282,33 @@ function validateExecutionScope(plan: AurousPlan, result: ExecutionResult): void
       runId: plan.runId,
     });
   }
+}
+
+function normalizeExecutionCompatibility(
+  plan: AurousPlan,
+  result: ExecutionResult,
+): ExecutionResult {
+  if (plan.tool !== 'linear') return result;
+  const notes = [...(result.compatibilityNotes ?? [])];
+  for (const object of [...result.createdObjects, ...(result.skippedActions ?? [])]) {
+    if (!object.externalId) {
+      notes.push(
+        `Official Linear MCP returned no ID for ${object.type} "${object.name}"; the action result cannot be used for exact-ID replay.`,
+      );
+    }
+    if (!object.url) {
+      notes.push(
+        `Official Linear MCP returned no standalone URL for ${object.type} "${object.name}"; its exact ID was preserved.`,
+      );
+    }
+  }
+  return ExecutionResultSchema.parse({ ...result, compatibilityNotes: [...new Set(notes)] });
+}
+
+function linearPlanTeam(plan: AurousPlan): string | undefined {
+  return plan.plannedActions
+    .flatMap((action) => action.properties)
+    .find((property) => property.key === 'linear.team')?.value;
 }
 
 function validateInspectionScope(

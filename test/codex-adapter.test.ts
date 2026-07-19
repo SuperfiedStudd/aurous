@@ -14,12 +14,20 @@ describe('Codex invocation permissions', () => {
     },
   );
 
-  it('keeps normal apply read-only and does not silently change its MCP approval policy', () => {
-    const args = buildCodexInvocationArgs('apply', '/tmp/schema.json', '/tmp/output.json');
+  it('pre-approves only the selected MCP after Aurous has explicit apply approval', () => {
+    const args = buildCodexInvocationArgs(
+      'apply',
+      '/tmp/schema.json',
+      '/tmp/output.json',
+      'linear',
+    );
 
     expect(args.join(' ')).toContain('--sandbox read-only');
-    expect(args).not.toContain('--strict-config');
-    expect(args.join(' ')).not.toContain('default_tools_approval_mode');
+    expect(args).toContain('--strict-config');
+    expect(args.join(' ')).toContain(
+      '--config mcp_servers.linear.default_tools_approval_mode="approve"',
+    );
+    expect(args.join(' ')).not.toContain('mcp_servers.notion');
   });
 
   it.each(['notion', 'linear'] as const)(
