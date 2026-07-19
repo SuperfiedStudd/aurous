@@ -148,6 +148,28 @@ const nullFilterCapturedShape = RecoveryInspectionSchema.parse({
   warnings: ['Verification warning.'],
 });
 
+const emptyAdvancedGroupPlannedShape = withTaskEmptyFilterSummary(
+  noFilterConfiguredCapturedShape,
+  'Advanced filter is an AND group containing zero filters.',
+);
+
+const emptyAdvancedGroupVerificationShape = RecoveryInspectionSchema.parse({
+  ...withTaskEmptyFilterSummary(
+    emptyAdvancedGroupPlannedShape,
+    'No filters; exposed advanced filter is an empty AND group.',
+  ),
+  objects: [
+    ...withTaskEmptyFilterSummary(
+      emptyAdvancedGroupPlannedShape,
+      'No filters; exposed advanced filter is an empty AND group.',
+    ).objects,
+  ].reverse(),
+  customStatusOptions: { supported: false, evidence: 'Different verification prose.' },
+  customSelectOptions: { supported: true, evidence: 'Different verification prose.' },
+  updateViewFilters: { supported: true, evidence: 'Different verification prose.' },
+  warnings: ['Different verification warning.'],
+});
+
 describe('recovery semantic verification', () => {
   it('treats the captured inspection and pre-execution shapes as equivalent', () => {
     expect(recoverySemanticFingerprint(preExecutionCapturedShape)).toBe(
@@ -191,6 +213,73 @@ describe('recovery semantic verification', () => {
     expect(
       diffRecoverySemanticInspections(noFilterConfiguredCapturedShape, nullFilterCapturedShape),
     ).toEqual([]);
+  });
+
+  it.each([
+    'advanced filter is an and group containing zero filters.',
+    'no filters; exposed advanced filter is an empty and group.',
+    'empty and filter group',
+    'and group containing zero filters',
+    'advanced filter contains zero filters',
+    'empty advanced filter group',
+  ])('normalizes the explicit empty advanced-group representation %j', (filterSummary) => {
+    expect(recoverySemanticFingerprint(singleFilterInspection(filterSummary))).toBe(
+      recoverySemanticFingerprint(singleFilterInspection(null)),
+    );
+  });
+
+  it('normalizes the two captured empty advanced-group differences to no semantic diff', async () => {
+    const capturedDiff = JSON.parse(
+      await readFile(
+        new URL('./fixtures/recovery-empty-filter-group-diff.json', import.meta.url),
+        'utf8',
+      ),
+    ) as Array<{ path: string; expected: string; actual: string }>;
+
+    expect(capturedDiff).toEqual([
+      {
+        path: '$.objects[3].views[0].filterState',
+        expected: 'advanced filter is an and group containing zero filters.',
+        actual: 'no filters; exposed advanced filter is an empty and group.',
+      },
+      {
+        path: '$.objects[3].views[1].filterState',
+        expected: 'advanced filter is an and group containing zero filters.',
+        actual: 'no filters; exposed advanced filter is an empty and group.',
+      },
+    ]);
+    expect(
+      diffRecoverySemanticInspections(
+        emptyAdvancedGroupPlannedShape,
+        emptyAdvancedGroupVerificationShape,
+      ),
+    ).toEqual([]);
+  });
+
+  it('does not equate a real AND group containing one condition with an empty group', () => {
+    const actual = singleFilterInspection(
+      'Advanced AND group containing 1 filter: Status equals "Backlog"',
+    );
+    const empty = singleFilterInspection('empty advanced filter group');
+
+    expect(diffRecoverySemanticInspections(actual, empty)).toEqual([
+      {
+        path: '$.objects[0].views[0].filterState',
+        expected: 'advanced and group containing 1 filter: status equals "backlog"',
+        actual: null,
+      },
+    ]);
+  });
+
+  it.each([
+    ['property', 'AND(Priority equals "Backlog")'],
+    ['operator', 'AND(Status does not equal "Backlog")'],
+    ['value', 'AND(Status equals "Blocked")'],
+  ])('fails closed when a real AND-group %s changes', (_label, changedSummary) => {
+    const expected = singleFilterInspection('AND(Status equals "Backlog")');
+    const actual = singleFilterInspection(changedSummary);
+
+    expect(diffRecoverySemanticInspections(expected, actual)).not.toEqual([]);
   });
 
   it('fails closed when a real filter condition changes', () => {
@@ -345,5 +434,26 @@ function singleFilterInspection(filterSummary: string | null): RecoveryInspectio
     customSelectOptions: { supported: true, evidence: 'Capability prose.' },
     updateViewFilters: { supported: true, evidence: 'Capability prose.' },
     warnings: [],
+  });
+}
+
+function withTaskEmptyFilterSummary(
+  inspection: RecoveryInspection,
+  filterSummary: string,
+): RecoveryInspection {
+  return RecoveryInspectionSchema.parse({
+    ...inspection,
+    objects: inspection.objects.map((object) =>
+      object.actionId === 'action-005'
+        ? {
+            ...object,
+            views: object.views.map((view) =>
+              view.name === 'Backlog' || view.name === 'Blocked'
+                ? { ...view, filterSummary }
+                : view,
+            ),
+          }
+        : object,
+    ),
   });
 }
