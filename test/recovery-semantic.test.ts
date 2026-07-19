@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   RecoveryInspectionSchema,
@@ -102,6 +103,51 @@ const preExecutionCapturedShape = RecoveryInspectionSchema.parse({
   warnings: ['Different read-only warning prose.'],
 });
 
+const noFilterConfiguredCapturedShape = RecoveryInspectionSchema.parse({
+  objects: [
+    inspectionObject('action-001', 'page', 'Aurous Product HQ', []),
+    inspectionObject('action-002', 'page', 'Project Overview', []),
+    inspectionObject('action-003', 'database', 'Milestone Tracker', [
+      { name: 'Default view', type: 'table', filterSummary: 'No filter configured' },
+      { name: 'All Milestones', type: 'table', filterSummary: 'No filter configured' },
+      { name: 'Status Board', type: 'board', filterSummary: 'No filter configured' },
+      { name: 'Delivery Timeline', type: 'timeline', filterSummary: 'No filter configured' },
+    ]),
+    inspectionObject('action-005', 'database', 'Task Database', [
+      {
+        name: 'Backlog',
+        type: 'table',
+        filterSummary: 'No filters (empty AND filter group)',
+      },
+      {
+        name: 'Blocked',
+        type: 'table',
+        filterSummary: 'No filters (empty AND filter group)',
+      },
+      { name: 'By Milestone', type: 'table', filterSummary: 'No filter configured' },
+      { name: 'Default view', type: 'table', filterSummary: 'No filter configured' },
+      { name: 'Work Board', type: 'board', filterSummary: 'No filter configured' },
+    ]),
+  ],
+  customStatusOptions: { supported: false, evidence: 'Planning inspection prose.' },
+  customSelectOptions: { supported: true, evidence: 'Planning inspection prose.' },
+  updateViewFilters: { supported: true, evidence: 'Planning inspection prose.' },
+  warnings: ['Planning inspection warning.'],
+});
+
+const nullFilterCapturedShape = RecoveryInspectionSchema.parse({
+  ...noFilterConfiguredCapturedShape,
+  objects: noFilterConfiguredCapturedShape.objects.map((object) => ({
+    ...object,
+    views: object.views.map((view) => ({ ...view, filterSummary: null })),
+    limitations: ['Different pre-write verification prose.'],
+  })),
+  customStatusOptions: { supported: false, evidence: 'Verification prose.' },
+  customSelectOptions: { supported: true, evidence: 'Verification prose.' },
+  updateViewFilters: { supported: true, evidence: 'Verification prose.' },
+  warnings: ['Verification warning.'],
+});
+
 describe('recovery semantic verification', () => {
   it('treats the captured inspection and pre-execution shapes as equivalent', () => {
     expect(recoverySemanticFingerprint(preExecutionCapturedShape)).toBe(
@@ -110,6 +156,67 @@ describe('recovery semantic verification', () => {
     expect(
       diffRecoverySemanticInspections(originalCapturedShape, preExecutionCapturedShape),
     ).toEqual([]);
+  });
+
+  it.each([
+    null,
+    '',
+    'no filter configured',
+    'no filters configured',
+    'no active filters',
+    'no filter',
+    'empty filter',
+    'empty AND filter group',
+    '0 filters',
+  ])('normalizes the explicit empty-filter representation %j', (filterSummary) => {
+    expect(recoverySemanticFingerprint(singleFilterInspection(filterSummary))).toBe(
+      recoverySemanticFingerprint(singleFilterInspection(null)),
+    );
+  });
+
+  it('normalizes all seven captured no-filter-configured differences to no semantic diff', async () => {
+    const capturedDiff = JSON.parse(
+      await readFile(
+        new URL('./fixtures/recovery-no-filter-configured-diff.json', import.meta.url),
+        'utf8',
+      ),
+    ) as Array<{ path: string; expected: string; actual: null }>;
+
+    expect(capturedDiff).toHaveLength(7);
+    expect(
+      capturedDiff.every(
+        ({ expected, actual }) => expected === 'no filter configured' && actual === null,
+      ),
+    ).toBe(true);
+    expect(
+      diffRecoverySemanticInspections(noFilterConfiguredCapturedShape, nullFilterCapturedShape),
+    ).toEqual([]);
+  });
+
+  it('fails closed when a real filter condition changes', () => {
+    const expected = singleFilterInspection('Status equals "Backlog"');
+    const actual = singleFilterInspection('Status equals "Blocked"');
+
+    expect(diffRecoverySemanticInspections(expected, actual)).toEqual([
+      {
+        path: '$.objects[0].views[0].filterState',
+        expected: 'status equals "backlog"',
+        actual: 'status equals "blocked"',
+      },
+    ]);
+  });
+
+  it('fails closed when a real filter is removed', () => {
+    const expected = singleFilterInspection('Status equals "Unknown"');
+    const actual = singleFilterInspection('no filter configured');
+
+    expect(diffRecoverySemanticInspections(expected, actual)).toEqual([
+      {
+        path: '$.objects[0].views[0].filterState',
+        expected: 'status equals "unknown"',
+        actual: null,
+      },
+    ]);
   });
 
   it.each([
@@ -205,3 +312,38 @@ describe('recovery semantic verification', () => {
     expect(diffRecoverySemanticInspections(originalCapturedShape, changed)).not.toEqual([]);
   });
 });
+
+function inspectionObject(
+  actionId: string,
+  objectType: 'page' | 'database',
+  title: string,
+  views: Array<{ name: string; type: string; filterSummary: string | null }>,
+) {
+  return {
+    actionId,
+    externalId: `${actionId}-exact-id`,
+    url: `https://app.notion.com/p/${actionId}`,
+    found: true,
+    objectType,
+    title,
+    parentId: objectType === 'page' && actionId === 'action-001' ? null : 'action-001-exact-id',
+    properties: [],
+    views,
+    recordCount: null,
+    limitations: ['Captured inspection prose.'],
+  };
+}
+
+function singleFilterInspection(filterSummary: string | null): RecoveryInspection {
+  return RecoveryInspectionSchema.parse({
+    objects: [
+      inspectionObject('action-003', 'database', 'Milestone Tracker', [
+        { name: 'Status Board', type: 'board', filterSummary },
+      ]),
+    ],
+    customStatusOptions: { supported: false, evidence: 'Capability prose.' },
+    customSelectOptions: { supported: true, evidence: 'Capability prose.' },
+    updateViewFilters: { supported: true, evidence: 'Capability prose.' },
+    warnings: [],
+  });
+}

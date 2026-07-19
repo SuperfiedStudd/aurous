@@ -1,0 +1,37 @@
+[
+  {
+    "path": "$.objects[2].views[0].filterState",
+    "expected": "no filter configured",
+    "actual": null
+  },
+  {
+    "path": "$.objects[2].views[1].filterState",
+    "expected": "no filter configured",
+    "actual": null
+  },
+  {
+    "path": "$.objects[2].views[2].filterState",
+    "expected": "no filter configured",
+    "actual": null
+  },
+  {
+    "path": "$.objects[2].views[3].filterState",
+    "expected": "no filter configured",
+    "actual": null
+  },
+  {
+    "path": "$.objects[3].views[2].filterState",
+    "expected": "no filter configured",
+    "actual": null
+  },
+  {
+    "path": "$.objects[3].views[3].filterState",
+    "expected": "no filter configured",
+    "actual": null
+  },
+  {
+    "path": "$.objects[3].views[4].filterState",
+    "expected": "no filter configured",
+    "actual": null
+  }
+]
