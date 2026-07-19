@@ -17,11 +17,18 @@ import {
 } from '../domain/schemas.js';
 import { AurousError } from './errors.js';
 import { redactText, redactValue } from './redact.js';
+import {
+  RecoveryCheckpointSchema,
+  RecoveryPlanSchema,
+  type RecoveryCheckpoint,
+  type RecoveryPlan,
+} from '../domain/recovery.js';
 
 export interface RunStore {
   init(config?: Partial<AurousConfig>): Promise<AurousConfig>;
   loadConfig(): Promise<AurousConfig>;
   createRun(record: RunRecord, context: ContextBundle): Promise<void>;
+  loadContext(runId: string): Promise<ContextBundle>;
   updateStatus(runId: string, status: RunStatus): Promise<RunRecord>;
   savePlan(plan: AurousPlan): Promise<void>;
   loadPlan(runId: string): Promise<AurousPlan>;
@@ -33,6 +40,10 @@ export interface RunStore {
   listRuns(): Promise<RunRecord[]>;
   readEvents(runId: string): Promise<DiagnosticEvent[]>;
   readAgentFailureSummary(runId: string): Promise<string | undefined>;
+  saveRecoveryPlan(plan: RecoveryPlan): Promise<void>;
+  loadRecoveryPlan(runId: string): Promise<RecoveryPlan>;
+  appendRecoveryCheckpoint(runId: string, checkpoint: RecoveryCheckpoint): Promise<void>;
+  readRecoveryCheckpoints(runId: string): Promise<RecoveryCheckpoint[]>;
   runDirectory(runId: string): string;
 }
 
@@ -84,6 +95,14 @@ export class LocalRunStore implements RunStore {
       this.writeJson(path.join(directory, 'run.json'), validated),
       this.writeJson(path.join(directory, 'context.json'), validatedContext),
     ]);
+  }
+
+  async loadContext(runId: string): Promise<ContextBundle> {
+    return this.readJson(
+      path.join(this.runDirectory(runId), 'context.json'),
+      ContextBundleSchema,
+      `context ${runId}`,
+    );
   }
 
   async updateStatus(runId: string, status: RunStatus): Promise<RunRecord> {
@@ -229,6 +248,52 @@ export class LocalRunStore implements RunStore {
       .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
     if (!latest) return undefined;
     return extractTerminalErrorSummary(latest.stderr || latest.stdout);
+  }
+
+  async saveRecoveryPlan(plan: RecoveryPlan): Promise<void> {
+    const validated = RecoveryPlanSchema.parse(plan);
+    await this.writeJson(
+      path.join(this.runDirectory(plan.recoveryRunId), 'recovery-plan.json'),
+      validated,
+    );
+  }
+
+  async loadRecoveryPlan(runId: string): Promise<RecoveryPlan> {
+    return this.readJson(
+      path.join(this.runDirectory(runId), 'recovery-plan.json'),
+      RecoveryPlanSchema,
+      `recovery plan ${runId}`,
+    );
+  }
+
+  async appendRecoveryCheckpoint(runId: string, checkpoint: RecoveryCheckpoint): Promise<void> {
+    const validated = RecoveryCheckpointSchema.parse(redactValue(checkpoint));
+    const handle = await open(
+      path.join(this.runDirectory(runId), 'recovery-checkpoints.jsonl'),
+      'a',
+      0o600,
+    );
+    try {
+      await handle.appendFile(`${JSON.stringify(validated)}\n`, 'utf8');
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async readRecoveryCheckpoints(runId: string): Promise<RecoveryCheckpoint[]> {
+    try {
+      const content = await readFile(
+        path.join(this.runDirectory(runId), 'recovery-checkpoints.jsonl'),
+        'utf8',
+      );
+      return content
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => RecoveryCheckpointSchema.parse(JSON.parse(line)));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
   }
 
   private validateRunId(runId: string): string {

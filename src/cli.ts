@@ -9,7 +9,7 @@ import { consoleOutput, type Output } from './core/output.js';
 export interface CliDependencies {
   cwd?: string;
   output?: Output;
-  confirm?: (question: string) => Promise<boolean>;
+  confirm?: (question: string, expected?: string) => Promise<boolean>;
 }
 
 export function createCli(dependencies: CliDependencies = {}): Command {
@@ -93,9 +93,33 @@ export function createCli(dependencies: CliDependencies = {}): Command {
               confirm: () =>
                 confirm(
                   'Execute exactly this saved plan through the configured MCP? Type "apply" to confirm: ',
+                  'apply',
                 ),
             }
           : {}),
+        signal: controller.signal,
+      });
+    });
+
+  program
+    .command('recover <run-id>')
+    .description(
+      'Inspect a partial run read-only, or explicitly apply a separately saved recovery plan.',
+    )
+    .option('--apply', 'apply this saved recovery plan after preview and typed confirmation')
+    .action(async (runId: string, options: { apply?: boolean }) => {
+      const controller = cancellationController();
+      if (!options.apply) {
+        await services.recover(runId, { signal: controller.signal });
+        return;
+      }
+      const expected = `recover ${runId}`;
+      await services.applyRecovery(runId, {
+        confirm: () =>
+          confirm(
+            `Execute exactly this recovery plan through the configured MCP? Type "${expected}" to confirm: `,
+            expected,
+          ),
         signal: controller.signal,
       });
     });
@@ -118,11 +142,11 @@ export function createCli(dependencies: CliDependencies = {}): Command {
   return program;
 }
 
-async function confirmInTerminal(question: string): Promise<boolean> {
+async function confirmInTerminal(question: string, expected = 'apply'): Promise<boolean> {
   if (!input.isTTY || !output.isTTY) return false;
   const reader = createInterface({ input, output });
   try {
-    return (await reader.question(question)).trim().toLowerCase() === 'apply';
+    return (await reader.question(question)).trim().toLowerCase() === expected.toLowerCase();
   } finally {
     reader.close();
   }

@@ -39,6 +39,17 @@ aurous diagnose <run-id>
 
 `plan` prints the context summary before any live agent is invoked. `apply` reloads the saved plan, previews its exact actions, and requires confirmation (`--yes` is an explicit confirmation for automation).
 
+If an apply ends `partial` after recording external object IDs, generate a separate read-only recovery plan before attempting more writes:
+
+```bash
+aurous recover <partial-run-id>
+# Review the exact-ID classifications and any compatibility decisions.
+aurous recover <recovery-run-id> --apply
+# Type the displayed "recover <recovery-run-id>" phrase after the second preview.
+```
+
+Recovery has no `--yes` bypass. It fetches only persisted external IDs, never searches or reuses by name, converts unsupported custom Notion Status definitions to explicit Select options when the inspected MCP supports them, verifies live state again after approval, and checkpoints each successful action before continuing.
+
 ## Commands
 
 | Command                                | Purpose                                                                |
@@ -47,6 +58,7 @@ aurous diagnose <run-id>
 | `aurous doctor [--verbose]`            | Check runtime, agent installations, auth, and MCP readiness            |
 | `aurous plan ...`                      | Read only the provided context paths and create a validated saved plan |
 | `aurous apply <run-id> [--yes]`        | Approve and execute exactly one saved plan                             |
+| `aurous recover <run-id> [--apply]`    | Reconcile a partial run read-only or approve its saved recovery plan   |
 | `aurous runs`                          | List local runs and statuses                                           |
 | `aurous diagnose <run-id> [--verbose]` | Print a redacted, shareable diagnostic report                          |
 
@@ -68,6 +80,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and 
 - Context is opt-in per path; symlinks, secrets, `.git`, dependencies, build output, and large/binary files are skipped.
 - Planning cannot write to Notion or Linear and live agents receive an explicit no-tool planning instruction.
 - Applying uses the saved plan as an allowlist. The execution prompt forbids scope expansion.
+- Recovery reuses only exact persisted external IDs, has no automatic deletion, requires a fresh typed approval, and stops after the first partial or ambiguous action.
 - Logs and errors are redacted before persistence and include stable `AUR-*` codes.
 - Missing optional tools never prevent mock mode or unrelated adapters from working.
 

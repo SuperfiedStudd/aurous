@@ -80,6 +80,8 @@ describe('AurousServices mock flow', () => {
       name: 'mock',
       diagnose: () => new MockAgentAdapter().diagnose(),
       generatePlan: (input) => new MockAgentAdapter().generatePlan(input),
+      inspectRecovery: (input) => new MockAgentAdapter().inspectRecovery(input),
+      executeRecoveryAction: (input) => new MockAgentAdapter().executeRecoveryAction(input),
       manualFallback: (directory, phase, prompt) =>
         new MockAgentAdapter().manualFallback(directory, phase, prompt),
       executePlan: () =>
@@ -126,6 +128,8 @@ describe('AurousServices mock flow', () => {
       name: 'mock',
       diagnose: () => mock.diagnose(),
       generatePlan: (input) => mock.generatePlan(input),
+      inspectRecovery: (inspectionInput) => mock.inspectRecovery(inspectionInput),
+      executeRecoveryAction: (executionInput) => mock.executeRecoveryAction(executionInput),
       manualFallback: (directory, phase, prompt) => mock.manualFallback(directory, phase, prompt),
       executePlan: () =>
         Promise.reject(

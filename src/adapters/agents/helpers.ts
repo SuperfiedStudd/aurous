@@ -3,9 +3,11 @@ import path from 'node:path';
 import { AurousCommandError, AurousError } from '../../core/errors.js';
 import { redactText } from '../../core/redact.js';
 
+export type AgentPhase = 'plan' | 'apply' | 'recover-inspect' | 'recover-apply';
+
 export async function writeManualPrompt(
   runDirectory: string,
-  phase: 'plan' | 'apply',
+  phase: AgentPhase,
   prompt: string,
 ): Promise<string> {
   const target = path.join(runDirectory, `${phase}-manual-prompt.txt`);
@@ -40,7 +42,7 @@ export function parseJsonPayload(value: string): unknown {
 
 export function commandFailure(
   agent: string,
-  phase: 'plan' | 'apply',
+  phase: AgentPhase,
   command: string[],
   stdout: string,
   stderr: string,
@@ -77,7 +79,7 @@ export function commandFailure(
 
 export function structuredOutputFailure(
   agent: string,
-  phase: 'plan' | 'apply',
+  phase: AgentPhase,
   command: string[],
   stdout: string,
   stderr: string,

@@ -18,12 +18,18 @@ import {
   type ExecutionResult,
   type RunRecord,
 } from '../domain/schemas.js';
+import {
+  RecoveryInspectionSchema,
+  buildRecoveryPlan,
+  type RecoveryPlan,
+} from '../domain/recovery.js';
 import { asAurousError, AurousCommandError, AurousError } from './errors.js';
 import { ingestContext } from './context.js';
 import {
   formatContextSummary,
   formatExecutionResult,
   formatPlan,
+  formatRecoveryPlan,
   formatRun,
   type Output,
 } from './output.js';
@@ -36,6 +42,7 @@ export interface ServiceDependencies {
   output: Output;
   agentFactory?: (name: AgentName) => AgentAdapter;
   now?: () => Date;
+  progressIntervalMs?: number;
 }
 
 export interface PlanOptions {
@@ -53,6 +60,15 @@ export interface ApplyOptions {
   signal?: AbortSignal;
 }
 
+export interface RecoverOptions {
+  signal?: AbortSignal;
+}
+
+export interface ApplyRecoveryOptions {
+  confirm: () => Promise<boolean>;
+  signal?: AbortSignal;
+}
+
 export interface DoctorReport {
   node: { status: 'ready' | 'not-ready'; version: string; detail: string };
   state: { status: 'ready' | 'not-ready'; detail: string };
@@ -62,10 +78,12 @@ export interface DoctorReport {
 export class AurousServices {
   private readonly agentFactory: (name: AgentName) => AgentAdapter;
   private readonly now: () => Date;
+  private readonly progressIntervalMs: number;
 
   constructor(private readonly dependencies: ServiceDependencies) {
     this.agentFactory = dependencies.agentFactory ?? createAgentAdapter;
     this.now = dependencies.now ?? (() => new Date());
+    this.progressIntervalMs = dependencies.progressIntervalMs ?? 10_000;
   }
 
   async init(config: Partial<AurousConfig> = {}): Promise<AurousConfig> {
@@ -156,6 +174,7 @@ export class AurousServices {
       tool: toolName,
       objective,
       approvedContextPaths: context.summary.approvedPaths,
+      runKind: 'standard',
     };
     await this.dependencies.store.createRun(record, context);
     await this.event(runId, 'info', 'AUR-PLAN-100', 'Plan generation started.', {
@@ -167,16 +186,18 @@ export class AurousServices {
     try {
       const adapter = this.agentFactory(agentName);
       const productivity = createProductivityAdapter(toolName);
-      const invocation = await adapter.generatePlan({
-        runId,
-        workspace: this.dependencies.workspace,
-        runDirectory: this.dependencies.store.runDirectory(runId),
-        objective,
-        context,
-        productivity,
-        timeoutMs: options.timeoutMs ?? config.timeoutMs,
-        ...(options.signal ? { signal: options.signal } : {}),
-      });
+      const invocation = await this.withProgress('plan generation', options.signal, () =>
+        adapter.generatePlan({
+          runId,
+          workspace: this.dependencies.workspace,
+          runDirectory: this.dependencies.store.runDirectory(runId),
+          objective,
+          context,
+          productivity,
+          timeoutMs: options.timeoutMs ?? config.timeoutMs,
+          ...(options.signal ? { signal: options.signal } : {}),
+        }),
+      );
       await this.dependencies.store.saveCommandLog(
         runId,
         'plan-agent',
@@ -282,14 +303,16 @@ export class AurousServices {
     try {
       const adapter = this.agentFactory(plan.agent);
       const productivity = createProductivityAdapter(plan.tool);
-      const invocation = await adapter.executePlan({
-        workspace: this.dependencies.workspace,
-        runDirectory: this.dependencies.store.runDirectory(runId),
-        plan,
-        productivity,
-        timeoutMs: config.timeoutMs,
-        ...(options.signal ? { signal: options.signal } : {}),
-      });
+      const invocation = await this.withProgress('plan apply', options.signal, () =>
+        adapter.executePlan({
+          workspace: this.dependencies.workspace,
+          runDirectory: this.dependencies.store.runDirectory(runId),
+          plan,
+          productivity,
+          timeoutMs: config.timeoutMs,
+          ...(options.signal ? { signal: options.signal } : {}),
+        }),
+      );
       await this.dependencies.store.saveCommandLog(
         runId,
         'apply-agent',
@@ -358,6 +381,469 @@ export class AurousServices {
     }
   }
 
+  async recover(originalRunId: string, options: RecoverOptions = {}): Promise<RecoveryPlan> {
+    const [originalRecord, originalPlan, originalResult, originalContext, config] =
+      await Promise.all([
+        this.dependencies.store.getRun(originalRunId),
+        this.dependencies.store.loadPlan(originalRunId),
+        this.dependencies.store.loadResult(originalRunId),
+        this.dependencies.store.loadContext(originalRunId),
+        this.dependencies.store.loadConfig(),
+      ]);
+    if (
+      !originalResult ||
+      !['partial', 'failed'].includes(originalRecord.status) ||
+      originalResult.createdObjects.length === 0
+    ) {
+      throw new AurousError({
+        code: 'AUR-RECOVERY-001',
+        summary: `Run ${originalRunId} is not eligible for partial-run recovery.`,
+        probableCause:
+          'Recovery requires a partial or failed run with a persisted result containing external objects.',
+        nextAction: `Run "aurous diagnose ${originalRunId} --verbose" and do not retry writes blindly.`,
+        runId: originalRunId,
+      });
+    }
+    if (originalResult.createdObjects.some((object) => !object.externalId)) {
+      throw new AurousError({
+        code: 'AUR-RECOVERY-002',
+        summary: 'A recorded partial object is missing its stable external ID.',
+        probableCause: 'The interrupted apply did not persist enough identity data for safe reuse.',
+        nextAction: 'Inspect the target manually. Aurous will not match or reuse objects by name.',
+        runId: originalRunId,
+      });
+    }
+
+    const recoveryRunId = createRunId(this.now());
+    const timestamp = this.now().toISOString();
+    const record: RunRecord = {
+      runId: recoveryRunId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      status: 'reconciling',
+      agent: originalPlan.agent,
+      tool: originalPlan.tool,
+      objective: `Recover partial run ${originalRunId} without duplicating verified objects.`,
+      approvedContextPaths: originalContext.summary.approvedPaths,
+      runKind: 'recovery',
+      recoveryOf: originalRunId,
+    };
+    await this.dependencies.store.createRun(record, originalContext);
+    await this.event(
+      recoveryRunId,
+      'info',
+      'AUR-RECOVERY-100',
+      'Read-only recovery reconciliation started.',
+      { originalRunId },
+    );
+
+    try {
+      const adapter = this.agentFactory(originalPlan.agent);
+      const productivity = createProductivityAdapter(originalPlan.tool);
+      const invocation = await this.withProgress(
+        'read-only recovery inspection',
+        options.signal,
+        () =>
+          adapter.inspectRecovery({
+            recoveryRunId,
+            workspace: this.dependencies.workspace,
+            runDirectory: this.dependencies.store.runDirectory(recoveryRunId),
+            originalPlan,
+            originalResult,
+            productivity,
+            timeoutMs: config.timeoutMs,
+            ...(options.signal ? { signal: options.signal } : {}),
+          }),
+      );
+      await this.dependencies.store.saveCommandLog(
+        recoveryRunId,
+        'recovery-inspection',
+        invocation.stdout,
+        invocation.stderr,
+      );
+      const inspection = RecoveryInspectionSchema.parse(invocation.value);
+      validateInspectionScope(originalResult, inspection.objects);
+      const recoveryPlan = buildRecoveryPlan({
+        recoveryRunId,
+        originalPlan,
+        originalResult,
+        inspection,
+        createdAt: timestamp,
+      });
+      await this.dependencies.store.saveRecoveryPlan(recoveryPlan);
+      if (recoveryPlan.plannedActions.length > 0) {
+        await this.dependencies.store.savePlan({
+          ...originalPlan,
+          runId: recoveryRunId,
+          createdAt: timestamp,
+          objective: recoveryPlan.objective,
+          proposedWorkspaceStructure: recoveryPlan.plannedActions.map((action) => ({
+            kind: action.objectType,
+            name: action.target,
+            purpose: action.description,
+          })),
+          plannedActions: recoveryPlan.plannedActions,
+          assumptions: [
+            `This plan is the persisted execution scope for recovery of ${originalRunId}.`,
+          ],
+          warnings: recoveryPlan.warnings,
+          destructiveActions: [],
+          expectedResult: recoveryPlan.expectedResult,
+        });
+      }
+      for (const object of recoveryPlan.verifiedObjects) {
+        if (!object.externalId) continue;
+        await this.dependencies.store.appendRecoveryCheckpoint(recoveryRunId, {
+          timestamp: this.now().toISOString(),
+          recoveryRunId,
+          originalRunId,
+          actionId: object.actionId,
+          externalId: object.externalId,
+          ...(object.url ? { url: object.url } : {}),
+          type: object.type,
+          name: object.name,
+          source: 'inspection',
+        });
+      }
+      await this.dependencies.store.updateStatus(recoveryRunId, 'recovery-planned');
+      await this.event(
+        recoveryRunId,
+        recoveryPlan.isExecutable ? 'info' : 'warning',
+        'AUR-RECOVERY-101',
+        'Read-only recovery plan saved.',
+        {
+          originalRunId,
+          command: invocation.command,
+          durationMs: invocation.durationMs,
+          plannedActionIds: recoveryPlan.plannedActions.map((action) => action.id),
+          executable: recoveryPlan.isExecutable,
+        },
+      );
+      this.dependencies.output.log(`\n${formatRecoveryPlan(recoveryPlan)}`);
+      if (recoveryPlan.isExecutable) {
+        this.dependencies.output.log(
+          `\nNo recovery writes have been attempted. Review this plan, then run: aurous recover ${recoveryRunId} --apply`,
+        );
+      } else {
+        this.dependencies.output.log(
+          '\nRecovery is blocked. No external writes were attempted; resolve the reported drift or capability limitation first.',
+        );
+      }
+      return recoveryPlan;
+    } catch (error) {
+      const classified = asAurousError(error, recoveryRunId);
+      if (error instanceof AurousCommandError) {
+        await this.dependencies.store.saveCommandLog(
+          recoveryRunId,
+          'recovery-inspection-failed',
+          error.stdout,
+          error.stderr,
+        );
+      }
+      await this.dependencies.store.updateStatus(
+        recoveryRunId,
+        classified.code === 'AUR-AGENT-007' ? 'cancelled' : 'failed',
+      );
+      await this.event(recoveryRunId, 'error', classified.code, classified.message, {
+        originalRunId,
+        probableCause: classified.probableCause,
+        nextAction: classified.nextAction,
+      });
+      throw classified;
+    }
+  }
+
+  async applyRecovery(
+    recoveryRunId: string,
+    options: ApplyRecoveryOptions,
+  ): Promise<ExecutionResult | undefined> {
+    const [record, recoveryPlan, config] = await Promise.all([
+      this.dependencies.store.getRun(recoveryRunId),
+      this.dependencies.store.loadRecoveryPlan(recoveryRunId),
+      this.dependencies.store.loadConfig(),
+    ]);
+    if (
+      record.runKind !== 'recovery' ||
+      record.recoveryOf !== recoveryPlan.originalRunId ||
+      record.status !== 'recovery-planned'
+    ) {
+      throw new AurousError({
+        code: 'AUR-RECOVERY-003',
+        summary: `Recovery run ${recoveryRunId} is not awaiting approval.`,
+        probableCause: 'It is not a saved recovery plan, or execution has already been attempted.',
+        nextAction: `Run "aurous diagnose ${recoveryRunId} --verbose". Never retry recovery writes blindly.`,
+        runId: recoveryRunId,
+      });
+    }
+    if (!recoveryPlan.isExecutable) {
+      throw new AurousError({
+        code: 'AUR-RECOVERY-004',
+        summary: `Recovery run ${recoveryRunId} is blocked and cannot execute.`,
+        probableCause: 'The read-only reconciliation found drift or an unsupported capability.',
+        nextAction: 'Review the recovery classifications; no external writes were attempted.',
+        runId: recoveryRunId,
+      });
+    }
+
+    this.dependencies.output.log(formatRecoveryPlan(recoveryPlan));
+    const confirmed = await options.confirm();
+    if (!confirmed) {
+      await this.event(
+        recoveryRunId,
+        'warning',
+        'AUR-RECOVERY-102',
+        'Recovery preview declined; no external writes attempted.',
+      );
+      this.dependencies.output.log('\nRecovery cancelled. No external writes were attempted.');
+      return undefined;
+    }
+
+    const [originalPlan, originalResult] = await Promise.all([
+      this.dependencies.store.loadPlan(recoveryPlan.originalRunId),
+      this.dependencies.store.loadResult(recoveryPlan.originalRunId),
+    ]);
+    if (!originalResult) {
+      throw new AurousError({
+        code: 'AUR-RECOVERY-005',
+        summary: 'The original execution result disappeared before recovery.',
+        probableCause: 'Local recovery evidence changed after the plan was reviewed.',
+        nextAction: 'Do not proceed; restore or inspect the original run evidence.',
+        runId: recoveryRunId,
+      });
+    }
+    const existingCheckpoints =
+      await this.dependencies.store.readRecoveryCheckpoints(recoveryRunId);
+    if (existingCheckpoints.some((checkpoint) => checkpoint.source === 'action-result')) {
+      throw new AurousError({
+        code: 'AUR-RECOVERY-006',
+        summary: 'This recovery run already contains write checkpoints.',
+        probableCause: 'A prior execution attempt completed at least one external action.',
+        nextAction: 'Create a fresh read-only recovery plan; this run will not be replayed.',
+        runId: recoveryRunId,
+      });
+    }
+
+    const adapter = this.agentFactory(recoveryPlan.agent);
+    const productivity = createProductivityAdapter(recoveryPlan.tool);
+    const verificationInvocation = await this.withProgress(
+      'pre-write exact-ID verification',
+      options.signal,
+      () =>
+        adapter.inspectRecovery({
+          recoveryRunId,
+          workspace: this.dependencies.workspace,
+          runDirectory: this.dependencies.store.runDirectory(recoveryRunId),
+          originalPlan,
+          originalResult,
+          productivity,
+          timeoutMs: config.timeoutMs,
+          ...(options.signal ? { signal: options.signal } : {}),
+        }),
+    );
+    await this.dependencies.store.saveCommandLog(
+      recoveryRunId,
+      'recovery-pre-execution-verification',
+      verificationInvocation.stdout,
+      verificationInvocation.stderr,
+    );
+    const freshInspection = RecoveryInspectionSchema.parse(verificationInvocation.value);
+    validateInspectionScope(originalResult, freshInspection.objects);
+    const freshPlan = buildRecoveryPlan({
+      recoveryRunId,
+      originalPlan,
+      originalResult,
+      inspection: freshInspection,
+      createdAt: recoveryPlan.createdAt,
+    });
+    if (recoverySafetyFingerprint(freshPlan) !== recoverySafetyFingerprint(recoveryPlan)) {
+      throw new AurousError({
+        code: 'AUR-RECOVERY-011',
+        summary: 'Live Notion state or recovery capabilities changed after plan review.',
+        probableCause: 'The mandatory pre-write verification no longer matches the approved plan.',
+        nextAction: `Generate and review a fresh recovery plan from ${recoveryPlan.originalRunId}. No recovery writes were attempted.`,
+        runId: recoveryRunId,
+      });
+    }
+    for (const object of freshPlan.verifiedObjects) {
+      if (!object.externalId) continue;
+      await this.dependencies.store.appendRecoveryCheckpoint(recoveryRunId, {
+        timestamp: this.now().toISOString(),
+        recoveryRunId,
+        originalRunId: recoveryPlan.originalRunId,
+        actionId: object.actionId,
+        externalId: object.externalId,
+        ...(object.url ? { url: object.url } : {}),
+        type: object.type,
+        name: object.name,
+        source: 'pre-execution-verification',
+      });
+    }
+
+    await this.dependencies.store.updateStatus(recoveryRunId, 'recovering');
+    await this.event(
+      recoveryRunId,
+      'info',
+      'AUR-RECOVERY-103',
+      'Fresh explicit approval and pre-write verification completed; recovery started.',
+      { originalRunId: recoveryPlan.originalRunId },
+    );
+    const startedAt = this.now().toISOString();
+    let createdObjects: ExecutionResult['createdObjects'] = [];
+    let completedActionIds: string[] = [];
+    let warnings: string[] = [];
+    let failures: ExecutionResult['failures'] = [];
+    let invocationInProgress = false;
+
+    try {
+      for (const action of recoveryPlan.plannedActions) {
+        if (options.signal?.aborted) {
+          throw new AurousError({
+            code: 'AUR-AGENT-007',
+            summary: 'Recovery was cancelled before the next external action.',
+            probableCause: 'The user or calling process requested cancellation.',
+            nextAction: 'No subsequent action ran. Generate a fresh recovery plan before retrying.',
+            severity: 'recoverable',
+            runId: recoveryRunId,
+          });
+        }
+        invocationInProgress = true;
+        const invocation = await this.withProgress(
+          `recovery action ${action.id}`,
+          options.signal,
+          () =>
+            adapter.executeRecoveryAction({
+              workspace: this.dependencies.workspace,
+              runDirectory: this.dependencies.store.runDirectory(recoveryRunId),
+              recoveryPlan,
+              action,
+              knownObjects: [...recoveryPlan.verifiedObjects, ...createdObjects],
+              productivity,
+              timeoutMs: config.timeoutMs,
+              ...(options.signal ? { signal: options.signal } : {}),
+            }),
+        );
+        const actionResult = ExecutionResultSchema.parse(invocation.value);
+        validateRecoveryActionResult(recoveryPlan, action, actionResult);
+        createdObjects = mergeCreatedObjects(createdObjects, actionResult.createdObjects);
+        completedActionIds = [
+          ...new Set([...completedActionIds, ...actionResult.completedActionIds]),
+        ];
+        warnings = [...warnings, ...actionResult.warnings];
+        failures = [...failures, ...actionResult.failures];
+        for (const object of actionResult.createdObjects) {
+          if (!object.externalId) continue;
+          await this.dependencies.store.appendRecoveryCheckpoint(recoveryRunId, {
+            timestamp: this.now().toISOString(),
+            recoveryRunId,
+            originalRunId: recoveryPlan.originalRunId,
+            actionId: object.actionId,
+            externalId: object.externalId,
+            ...(object.url ? { url: object.url } : {}),
+            type: object.type,
+            name: object.name,
+            source: 'action-result',
+          });
+        }
+        invocationInProgress = false;
+        await this.dependencies.store.saveCommandLog(
+          recoveryRunId,
+          `recovery-action-${action.id}`,
+          invocation.stdout,
+          invocation.stderr,
+        );
+        const intermediate: ExecutionResult = {
+          status: 'partial',
+          summary: `Recovery checkpoint persisted after ${action.id}.`,
+          createdObjects,
+          completedActionIds,
+          warnings,
+          failures,
+          startedAt,
+          finishedAt: this.now().toISOString(),
+        };
+        await this.dependencies.store.saveResult(recoveryRunId, intermediate);
+        await this.event(
+          recoveryRunId,
+          actionResult.status === 'succeeded' ? 'info' : 'error',
+          'AUR-RECOVERY-104',
+          `Recovery action ${action.id} checkpointed.`,
+          {
+            status: actionResult.status,
+            command: invocation.command,
+            durationMs: invocation.durationMs,
+          },
+        );
+        if (actionResult.status !== 'succeeded') {
+          await this.dependencies.store.updateStatus(recoveryRunId, 'partial');
+          this.dependencies.output.log(formatExecutionResult(intermediate));
+          return intermediate;
+        }
+      }
+      const result: ExecutionResult = {
+        status: 'succeeded',
+        summary: `Recovery completed all ${recoveryPlan.plannedActions.length} approved actions.`,
+        createdObjects,
+        completedActionIds,
+        warnings,
+        failures,
+        startedAt,
+        finishedAt: this.now().toISOString(),
+      };
+      await this.dependencies.store.saveResult(recoveryRunId, result);
+      await this.dependencies.store.updateStatus(recoveryRunId, 'succeeded');
+      await this.event(recoveryRunId, 'info', 'AUR-RECOVERY-105', 'Recovery completed.', {
+        completedActionIds,
+      });
+      this.dependencies.output.log(formatExecutionResult(result));
+      return result;
+    } catch (error) {
+      const classified = asAurousError(error, recoveryRunId);
+      if (error instanceof AurousCommandError) {
+        await this.dependencies.store.saveCommandLog(
+          recoveryRunId,
+          'recovery-agent-failed',
+          error.stdout,
+          error.stderr,
+        );
+      }
+      const ambiguousWrite = invocationInProgress;
+      const finalStatus =
+        classified.code === 'AUR-AGENT-007' && !ambiguousWrite && completedActionIds.length === 0
+          ? 'cancelled'
+          : 'partial';
+      const failedResult: ExecutionResult = {
+        status: finalStatus,
+        summary: ambiguousWrite
+          ? `${classified.message} The last action may have written before its identity was checkpointed.`
+          : classified.message,
+        createdObjects,
+        completedActionIds,
+        warnings,
+        failures: [
+          ...failures,
+          {
+            code: classified.code,
+            summary: classified.message,
+            probableCause: classified.probableCause,
+            nextAction: ambiguousWrite
+              ? 'Do not retry this recovery run. Inspect exact external state and create a fresh read-only recovery plan.'
+              : classified.nextAction,
+            severity: classified.severity,
+          },
+        ],
+        startedAt,
+        finishedAt: this.now().toISOString(),
+      };
+      await this.dependencies.store.saveResult(recoveryRunId, failedResult);
+      await this.dependencies.store.updateStatus(recoveryRunId, finalStatus);
+      await this.event(recoveryRunId, 'error', classified.code, failedResult.summary, {
+        ambiguousWrite,
+        originalRunId: recoveryPlan.originalRunId,
+      });
+      throw classified;
+    }
+  }
+
   async runs(): Promise<RunRecord[]> {
     const runs = await this.dependencies.store.listRuns();
     if (runs.length === 0) this.dependencies.output.log('No Aurous runs found.');
@@ -406,6 +892,35 @@ export class AurousServices {
     this.dependencies.output.log(
       `Follow-up prompt: Investigate Aurous run ${runId} using this redacted report. Preserve the approved plan scope and address the first fatal or recoverable AUR-* event.`,
     );
+  }
+
+  private async withProgress<T>(
+    phase: string,
+    signal: AbortSignal | undefined,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    const started = Date.now();
+    this.dependencies.output.log(`Agent invocation started: ${phase}.`);
+    const timer = setInterval(() => {
+      const elapsedSeconds = Math.max(1, Math.round((Date.now() - started) / 1_000));
+      this.dependencies.output.log(
+        `Agent invocation in progress: ${phase} (${elapsedSeconds}s elapsed).`,
+      );
+    }, this.progressIntervalMs);
+    timer.unref?.();
+    try {
+      const value = await task();
+      const elapsedSeconds = ((Date.now() - started) / 1_000).toFixed(1);
+      this.dependencies.output.log(`Agent invocation completed: ${phase} (${elapsedSeconds}s).`);
+      return value;
+    } catch (error) {
+      const elapsedSeconds = ((Date.now() - started) / 1_000).toFixed(1);
+      const outcome = signal?.aborted ? 'cancelled' : 'failed';
+      this.dependencies.output.log(`Agent invocation ${outcome}: ${phase} (${elapsedSeconds}s).`);
+      throw error;
+    } finally {
+      clearInterval(timer);
+    }
   }
 
   private event(
@@ -476,4 +991,133 @@ function validateExecutionScope(plan: AurousPlan, result: ExecutionResult): void
       runId: plan.runId,
     });
   }
+}
+
+function validateInspectionScope(
+  originalResult: ExecutionResult,
+  inspectedObjects: RecoveryPlan['inspection']['objects'],
+): void {
+  const expectedIds = originalResult.createdObjects.flatMap((object) =>
+    object.externalId ? [object.externalId] : [],
+  );
+  const inspectedIds = inspectedObjects.map((object) => object.externalId);
+  const expected = new Set(expectedIds);
+  const received = new Set(inspectedIds);
+  if (
+    expected.size !== received.size ||
+    [...expected].some((externalId) => !received.has(externalId)) ||
+    inspectedIds.length !== received.size ||
+    inspectedObjects.some((object) => {
+      const recorded = originalResult.createdObjects.find(
+        (candidate) => candidate.externalId === object.externalId,
+      );
+      return recorded?.actionId !== object.actionId;
+    })
+  ) {
+    throw new AurousError({
+      code: 'AUR-RECOVERY-007',
+      summary: 'The recovery inspection did not return each recorded object exactly once.',
+      probableCause: 'The agent omitted, duplicated, or expanded the exact-ID inspection scope.',
+      nextAction: 'No writes were attempted. Retry the read-only recovery inspection.',
+    });
+  }
+}
+
+function recoverySafetyFingerprint(plan: RecoveryPlan): string {
+  return JSON.stringify({
+    objects: plan.inspection.objects
+      .map((object) => ({
+        externalId: object.externalId,
+        actionId: object.actionId,
+        found: object.found,
+        objectType: object.objectType,
+        title: object.title,
+        parentId: object.parentId,
+        recordCount: object.recordCount,
+        properties: object.properties
+          .map((property) => ({
+            ...property,
+            options: [...property.options].sort(),
+          }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+        views: [...object.views].sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .sort((a, b) => a.externalId.localeCompare(b.externalId)),
+    capabilities: {
+      customStatusOptions: plan.inspection.customStatusOptions.supported,
+      customSelectOptions: plan.inspection.customSelectOptions.supported,
+      updateViewFilters: plan.inspection.updateViewFilters.supported,
+    },
+    classifications: plan.classifications,
+    compatibilityDecisions: plan.compatibilityDecisions,
+    verifiedObjects: plan.verifiedObjects,
+    plannedActions: plan.plannedActions,
+    isExecutable: plan.isExecutable,
+  });
+}
+
+function validateRecoveryActionResult(
+  recoveryPlan: RecoveryPlan,
+  action: AurousPlan['plannedActions'][number],
+  result: ExecutionResult,
+): void {
+  const referenced = [
+    ...result.completedActionIds,
+    ...result.createdObjects.map((object) => object.actionId),
+    ...result.failures.flatMap((failure) => (failure.actionId ? [failure.actionId] : [])),
+  ];
+  if (referenced.some((actionId) => actionId !== action.id)) {
+    throw new AurousError({
+      code: 'AUR-RECOVERY-008',
+      summary: `Recovery action ${action.id} reported work outside its one-action scope.`,
+      probableCause: 'The agent referenced a different approved action in its result.',
+      nextAction: 'Stop recovery and inspect the target using exact external IDs.',
+      runId: recoveryPlan.recoveryRunId,
+    });
+  }
+  if (result.status === 'succeeded' && !result.completedActionIds.includes(action.id)) {
+    throw new AurousError({
+      code: 'AUR-RECOVERY-009',
+      summary: `Recovery action ${action.id} claimed success without completion evidence.`,
+      probableCause: 'The structured action result was internally inconsistent.',
+      nextAction: 'Do not execute later actions; create a fresh read-only recovery plan.',
+      runId: recoveryPlan.recoveryRunId,
+    });
+  }
+  if (result.status === 'succeeded' && ['create', 'update'].includes(action.operation)) {
+    const object = result.createdObjects.find((candidate) => candidate.actionId === action.id);
+    if (!object?.externalId) {
+      throw new AurousError({
+        code: 'AUR-RECOVERY-010',
+        summary: `Recovery action ${action.id} did not return a checkpointable external ID.`,
+        probableCause: 'The MCP write may have succeeded without durable identity evidence.',
+        nextAction: 'Do not retry. Inspect the target and create a fresh recovery plan.',
+        runId: recoveryPlan.recoveryRunId,
+      });
+    }
+    const expectedId = action.properties.find(
+      (property) => property.key === 'notion.recovery.externalId',
+    )?.value;
+    if (expectedId && object.externalId !== expectedId) {
+      throw new AurousError({
+        code: 'AUR-RECOVERY-011',
+        summary: `Recovery action ${action.id} returned a different external ID than the approved update.`,
+        probableCause: 'The existing object was not reused exactly as approved.',
+        nextAction: 'Stop recovery and inspect both IDs. Do not retry automatically.',
+        runId: recoveryPlan.recoveryRunId,
+      });
+    }
+  }
+}
+
+function mergeCreatedObjects(
+  current: ExecutionResult['createdObjects'],
+  next: ExecutionResult['createdObjects'],
+): ExecutionResult['createdObjects'] {
+  const merged = new Map(
+    current.map((object) => [`${object.actionId}:${object.externalId ?? object.name}`, object]),
+  );
+  for (const object of next)
+    merged.set(`${object.actionId}:${object.externalId ?? object.name}`, object);
+  return [...merged.values()];
 }
