@@ -342,6 +342,66 @@ describe('AurousServices recovery flow', () => {
     });
   });
 
+  it('fails closed before any recovery write when the filter state stays unknown', async () => {
+    const { workspace, store, capture, originalRunId } = await fixture();
+    const mock = new MockAgentAdapter();
+    let executionCalls = 0;
+    const adapter = agentWith({
+      inspectRecovery: async (input) => {
+        const inspection = await mock.inspectRecovery(input);
+        return {
+          ...inspection,
+          value: {
+            ...inspection.value,
+            objects: inspection.value.objects.map((object, index) =>
+              index === 0
+                ? {
+                    ...object,
+                    views: [
+                      {
+                        name: 'Uncertain view',
+                        type: 'table',
+                        filterState: {
+                          kind: 'unknown' as const,
+                          conditionCount: null,
+                          fingerprint: null,
+                        },
+                      },
+                    ],
+                  }
+                : object,
+            ),
+          },
+        };
+      },
+      executeRecoveryAction: async (input) => {
+        executionCalls += 1;
+        return mock.executeRecoveryAction(input);
+      },
+    });
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => adapter,
+    });
+    const recovery = await services.recover(originalRunId);
+
+    await expect(
+      services.applyRecovery(recovery.recoveryRunId, {
+        confirm: () => Promise.resolve(true),
+      }),
+    ).rejects.toMatchObject({ code: 'AUR-RECOVERY-011' });
+
+    expect(executionCalls).toBe(0);
+    const event = (await store.readEvents(recovery.recoveryRunId)).find(
+      (candidate) => candidate.code === 'AUR-RECOVERY-011',
+    );
+    expect(event?.metadata.semanticDiff).toContainEqual(
+      expect.objectContaining({ path: '$.objects[0].views[0].filterState' }),
+    );
+  });
+
   it('stops after a partial recovery action and executes no subsequent actions', async () => {
     const { workspace, store, capture, originalRunId } = await fixture();
     let executionCalls = 0;

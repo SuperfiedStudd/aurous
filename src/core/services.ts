@@ -24,7 +24,6 @@ import {
   RecoveryInspectionSchema,
   buildRecoveryPlan,
   diffRecoverySemanticInspections,
-  recoverySemanticFingerprint,
   type RecoveryPlan,
 } from '../domain/recovery.js';
 import { asAurousError, AurousCommandError, AurousError } from './errors.js';
@@ -653,10 +652,10 @@ export class AurousServices {
     );
     const freshInspection = RecoveryInspectionSchema.parse(verificationInvocation.value);
     validateInspectionScope(originalResult, freshInspection.objects);
-    if (
-      recoverySemanticFingerprint(freshInspection) !==
-      recoverySemanticFingerprint(recoveryPlan.inspection)
-    ) {
+    const semanticDiff = redactValue(
+      diffRecoverySemanticInspections(recoveryPlan.inspection, freshInspection),
+    );
+    if (semanticDiff.length > 0) {
       const error = new AurousError({
         code: 'AUR-RECOVERY-011',
         summary: 'Live Notion state or recovery capabilities changed after plan review.',
@@ -664,9 +663,6 @@ export class AurousServices {
         nextAction: `Generate and review a fresh recovery plan from ${recoveryPlan.originalRunId}. No recovery writes were attempted.`,
         runId: recoveryRunId,
       });
-      const semanticDiff = redactValue(
-        diffRecoverySemanticInspections(recoveryPlan.inspection, freshInspection),
-      );
       const timestamp = this.now().toISOString();
       await this.dependencies.store.saveResult(recoveryRunId, {
         status: 'failed',

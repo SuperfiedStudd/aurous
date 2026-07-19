@@ -4,7 +4,9 @@ import {
   RecoveryInspectionSchema,
   diffRecoverySemanticInspections,
   recoverySemanticFingerprint,
+  recoverySemanticInspection,
   type RecoveryInspection,
+  type ViewFilterState,
 } from '../src/domain/recovery.js';
 
 const originalCapturedShape = RecoveryInspectionSchema.parse({
@@ -139,7 +141,7 @@ const nullFilterCapturedShape = RecoveryInspectionSchema.parse({
   ...noFilterConfiguredCapturedShape,
   objects: noFilterConfiguredCapturedShape.objects.map((object) => ({
     ...object,
-    views: object.views.map((view) => ({ ...view, filterSummary: null })),
+    views: object.views.map((view) => legacyView(view, null)),
     limitations: ['Different pre-write verification prose.'],
   })),
   customStatusOptions: { supported: false, evidence: 'Verification prose.' },
@@ -256,56 +258,126 @@ describe('recovery semantic verification', () => {
     ).toEqual([]);
   });
 
-  it('does not equate a real AND group containing one condition with an empty group', () => {
-    const actual = singleFilterInspection(
-      'Advanced AND group containing 1 filter: Status equals "Backlog"',
-    );
-    const empty = singleFilterInspection('empty advanced filter group');
+  it('normalizes every captured legacy empty-filter artifact to typed none', async () => {
+    const capturedRuns = JSON.parse(
+      await readFile(
+        new URL('./fixtures/recovery-typed-filter-state-runs.json', import.meta.url),
+        'utf8',
+      ),
+    ) as Array<{
+      runId: string;
+      planned: Array<string | null>;
+      verification: Array<string | null>;
+    }>;
 
-    expect(diffRecoverySemanticInspections(actual, empty)).toEqual([
-      {
-        path: '$.objects[0].views[0].filterState',
-        expected: 'advanced and group containing 1 filter: status equals "backlog"',
-        actual: null,
-      },
+    expect(capturedRuns.map((run) => run.runId)).toEqual([
+      'run-20260719T032352Z-939347',
+      'run-20260719T033850Z-d0c5a4',
+      'run-20260719T035401Z-2679ce',
     ]);
+    for (const run of capturedRuns) {
+      const planned = legacyFilterListInspection(run.planned);
+      const verification = legacyFilterListInspection(run.verification);
+      expect(diffRecoverySemanticInspections(planned, verification), run.runId).toEqual([]);
+      for (const inspection of [planned, verification]) {
+        expect(
+          recoverySemanticInspection(inspection).objects[0]?.views.map((view) => view.filterState),
+          run.runId,
+        ).toEqual(run.planned.map(() => ({ kind: 'none', conditionCount: 0, fingerprint: null })));
+      }
+    }
+  });
+
+  it('does not equate a real AND group containing one condition with an empty group', () => {
+    const configured = singleTypedFilterInspection(configuredState());
+    const empty = singleTypedFilterInspection(noFilterState());
+
+    expect(diffRecoverySemanticInspections(configured, empty)).not.toEqual([]);
   });
 
   it.each([
-    ['property', 'AND(Priority equals "Backlog")'],
-    ['operator', 'AND(Status does not equal "Backlog")'],
-    ['value', 'AND(Status equals "Blocked")'],
-  ])('fails closed when a real AND-group %s changes', (_label, changedSummary) => {
-    const expected = singleFilterInspection('AND(Status equals "Backlog")');
-    const actual = singleFilterInspection(changedSummary);
+    ['property', configuredState({ property: 'Priority' })],
+    ['operator', configuredState({ operator: 'does_not_equal' })],
+    ['value', configuredState({ value: '"Blocked"' })],
+  ])('fails closed when a configured filter %s changes', (_label, changedState) => {
+    const expected = singleTypedFilterInspection(configuredState());
+    const actual = singleTypedFilterInspection(changedState);
 
     expect(diffRecoverySemanticInspections(expected, actual)).not.toEqual([]);
   });
 
-  it('fails closed when a real filter condition changes', () => {
-    const expected = singleFilterInspection('Status equals "Backlog"');
-    const actual = singleFilterInspection('Status equals "Blocked"');
+  it('fails closed when the configured condition count changes', () => {
+    const expected = singleTypedFilterInspection(configuredState());
+    const actual = singleTypedFilterInspection(twoConditionState());
 
-    expect(diffRecoverySemanticInspections(expected, actual)).toEqual([
-      {
-        path: '$.objects[0].views[0].filterState',
-        expected: 'status equals "backlog"',
-        actual: 'status equals "blocked"',
-      },
-    ]);
+    expect(diffRecoverySemanticInspections(expected, actual)).not.toEqual([]);
+  });
+
+  it('fails closed when nested group structure changes', () => {
+    const expected = singleTypedFilterInspection(nestedConfiguredState('and'));
+    const actual = singleTypedFilterInspection(nestedConfiguredState('or'));
+
+    expect(diffRecoverySemanticInspections(expected, actual)).not.toEqual([]);
+  });
+
+  it('canonicalizes configured fingerprint node ordering', () => {
+    const ordered = configuredState();
+    if (ordered.kind !== 'configured') throw new Error('Expected configured state.');
+    const reversed: ViewFilterState = {
+      ...ordered,
+      fingerprint: { nodes: [...ordered.fingerprint.nodes].reverse() },
+    };
+
+    expect(
+      diffRecoverySemanticInspections(
+        singleTypedFilterInspection(ordered),
+        singleTypedFilterInspection(reversed),
+      ),
+    ).toEqual([]);
+  });
+
+  it('rejects configured filter states whose count is zero or mismatches the fingerprint', () => {
+    const configured = configuredState();
+    if (configured.kind !== 'configured') throw new Error('Expected configured state.');
+    expect(() =>
+      singleTypedFilterInspection({
+        kind: 'configured',
+        conditionCount: 0,
+        fingerprint: configured.fingerprint,
+      }),
+    ).toThrow();
+    expect(() =>
+      singleTypedFilterInspection({
+        ...configured,
+        conditionCount: 2,
+      }),
+    ).toThrow();
   });
 
   it('fails closed when a real filter is removed', () => {
-    const expected = singleFilterInspection('Status equals "Unknown"');
-    const actual = singleFilterInspection('no filter configured');
+    const expected = singleTypedFilterInspection(configuredState());
+    const actual = singleTypedFilterInspection(noFilterState());
 
-    expect(diffRecoverySemanticInspections(expected, actual)).toEqual([
-      {
-        path: '$.objects[0].views[0].filterState',
-        expected: 'status equals "unknown"',
-        actual: null,
-      },
-    ]);
+    expect(diffRecoverySemanticInspections(expected, actual)).not.toEqual([]);
+  });
+
+  it('fails closed whenever either typed filter state is unknown', () => {
+    const unknown = singleTypedFilterInspection(unknownFilterState());
+    const sameUnknown = singleTypedFilterInspection(unknownFilterState());
+    const empty = singleTypedFilterInspection(noFilterState());
+
+    expect(diffRecoverySemanticInspections(unknown, sameUnknown)).not.toEqual([]);
+    expect(diffRecoverySemanticInspections(empty, unknown)).not.toEqual([]);
+  });
+
+  it('converts ambiguous legacy filter prose to unknown and fails closed', () => {
+    const legacy = singleFilterInspection('Status equals "Backlog"');
+    const sameLegacy = singleFilterInspection('Status equals "Backlog"');
+
+    expect(recoverySemanticInspection(legacy).objects[0]?.views[0]?.filterState).toEqual(
+      unknownFilterState(),
+    );
+    expect(diffRecoverySemanticInspections(legacy, sameLegacy)).not.toEqual([]);
   });
 
   it.each([
@@ -437,6 +509,125 @@ function singleFilterInspection(filterSummary: string | null): RecoveryInspectio
   });
 }
 
+function singleTypedFilterInspection(filterState: ViewFilterState): RecoveryInspection {
+  return RecoveryInspectionSchema.parse({
+    objects: [
+      {
+        ...inspectionObject('action-003', 'database', 'Milestone Tracker', []),
+        views: [{ name: 'Status Board', type: 'board', filterState }],
+      },
+    ],
+    customStatusOptions: { supported: false, evidence: 'Capability prose.' },
+    customSelectOptions: { supported: true, evidence: 'Capability prose.' },
+    updateViewFilters: { supported: true, evidence: 'Capability prose.' },
+    warnings: [],
+  });
+}
+
+function legacyFilterListInspection(filterSummaries: Array<string | null>): RecoveryInspection {
+  return RecoveryInspectionSchema.parse({
+    objects: [
+      inspectionObject(
+        'action-005',
+        'database',
+        'Task Database',
+        filterSummaries.map((filterSummary, index) => ({
+          name: `Captured view ${String(index).padStart(2, '0')}`,
+          type: 'table',
+          filterSummary,
+        })),
+      ),
+    ],
+    customStatusOptions: { supported: false, evidence: 'Captured capability prose.' },
+    customSelectOptions: { supported: true, evidence: 'Captured capability prose.' },
+    updateViewFilters: { supported: true, evidence: 'Captured capability prose.' },
+    warnings: [],
+  });
+}
+
+function noFilterState(): ViewFilterState {
+  return { kind: 'none', conditionCount: 0, fingerprint: null };
+}
+
+function unknownFilterState(): ViewFilterState {
+  return { kind: 'unknown', conditionCount: null, fingerprint: null };
+}
+
+function configuredState(
+  overrides: { property?: string; operator?: string; value?: string } = {},
+): ViewFilterState {
+  return {
+    kind: 'configured',
+    conditionCount: 1,
+    fingerprint: {
+      nodes: [
+        { path: '$', kind: 'and', property: null, operator: null, value: null },
+        {
+          path: '$.conditions[0]',
+          kind: 'condition',
+          property: overrides.property ?? 'Status',
+          operator: overrides.operator ?? 'equals',
+          value: overrides.value ?? '"Backlog"',
+        },
+      ],
+    },
+  };
+}
+
+function twoConditionState(): ViewFilterState {
+  const first = configuredState();
+  if (first.kind !== 'configured') throw new Error('Expected a configured fixture.');
+  return {
+    kind: 'configured',
+    conditionCount: 2,
+    fingerprint: {
+      nodes: [
+        ...first.fingerprint.nodes,
+        {
+          path: '$.conditions[1]',
+          kind: 'condition',
+          property: 'Priority',
+          operator: 'equals',
+          value: '"High"',
+        },
+      ],
+    },
+  };
+}
+
+function nestedConfiguredState(groupKind: 'and' | 'or'): ViewFilterState {
+  return {
+    kind: 'configured',
+    conditionCount: 1,
+    fingerprint: {
+      nodes: [
+        { path: '$', kind: 'and', property: null, operator: null, value: null },
+        {
+          path: '$.conditions[0]',
+          kind: groupKind,
+          property: null,
+          operator: null,
+          value: null,
+        },
+        {
+          path: '$.conditions[0].conditions[0]',
+          kind: 'condition',
+          property: 'Status',
+          operator: 'equals',
+          value: '"Backlog"',
+        },
+      ],
+    },
+  };
+}
+
+function legacyView(
+  view: RecoveryInspection['objects'][number]['views'][number],
+  filterSummary: string | null,
+) {
+  return { name: view.name, type: view.type, filterSummary };
+}
+
 function withTaskEmptyFilterSummary(
   inspection: RecoveryInspection,
   filterSummary: string,
@@ -449,7 +640,7 @@ function withTaskEmptyFilterSummary(
             ...object,
             views: object.views.map((view) =>
               view.name === 'Backlog' || view.name === 'Blocked'
-                ? { ...view, filterSummary }
+                ? legacyView(view, filterSummary)
                 : view,
             ),
           }

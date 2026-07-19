@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildRecoveryPlan, type RecoveryInspection } from '../src/domain/recovery.js';
+import {
+  RecoveryPlanSchema,
+  buildRecoveryPlan,
+  type RecoveryInspection,
+} from '../src/domain/recovery.js';
 import type { AurousPlan, ExecutionResult } from '../src/domain/schemas.js';
 
 const createdAt = '2026-07-19T02:00:00.000Z';
@@ -235,7 +239,7 @@ describe('partial-run recovery planning', () => {
     inspection.objects[1]?.views.push({
       name: 'Backlog',
       type: 'table',
-      filterSummary: null,
+      filterState: { kind: 'none', conditionCount: 0, fingerprint: null },
     });
     inspection.updateViewFilters = { supported: false, evidence: 'Unavailable.' };
     const recovery = buildRecoveryPlan({
@@ -313,6 +317,30 @@ describe('partial-run recovery planning', () => {
     expect(recovery.classifications.find((item) => item.actionId === 'action-004')).toMatchObject({
       status: 'blocked',
       recoveryOperation: 'block',
+    });
+  });
+
+  it('loads legacy persisted recovery-plan filter prose through the typed boundary', () => {
+    const { plan, result, inspection } = fixture();
+    const recovery = buildRecoveryPlan({
+      recoveryRunId: 'run-20260719T020000Z-bbbbbb',
+      originalPlan: plan,
+      originalResult: result,
+      inspection,
+      createdAt,
+    });
+    const stored = JSON.parse(JSON.stringify(recovery)) as {
+      inspection: { objects: Array<{ actionId: string; views: unknown[] }> };
+    };
+    const database = stored.inspection.objects.find((object) => object.actionId === 'action-002');
+    if (!database) throw new Error('Expected stored database inspection.');
+    database.views = [{ name: 'Backlog', type: 'table', filterSummary: 'No filter configured' }];
+
+    const parsed = RecoveryPlanSchema.parse(stored);
+    expect(parsed.inspection.objects[1]?.views[0]?.filterState).toEqual({
+      kind: 'none',
+      conditionCount: 0,
+      fingerprint: null,
     });
   });
 });

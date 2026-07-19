@@ -1,0 +1,67 @@
+[
+  {
+    "runId": "run-20260719T032352Z-939347",
+    "planned": [
+      "No filter configured",
+      "No filter configured",
+      "No filter configured",
+      "No filter configured",
+      "No filter configured",
+      "No filter configured",
+      "No filter configured",
+      "No filters (empty AND filter group)",
+      "No filters (empty AND filter group)"
+    ],
+    "verification": [null, null, null, null, null, null, null, null, null]
+  },
+  {
+    "runId": "run-20260719T033850Z-d0c5a4",
+    "planned": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "Advanced filter is an AND group containing zero filters.",
+      "Advanced filter is an AND group containing zero filters."
+    ],
+    "verification": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "No filters; exposed advanced filter is an empty AND group.",
+      "No filters; exposed advanced filter is an empty AND group."
+    ]
+  },
+  {
+    "runId": "run-20260719T035401Z-2679ce",
+    "planned": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "No filters (explicit empty AND filter group).",
+      "No filters (explicit empty AND filter group)."
+    ],
+    "verification": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      "No filters (empty AND filter group).",
+      "No filters (empty AND filter group)."
+    ]
+  }
+]
