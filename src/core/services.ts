@@ -915,7 +915,12 @@ export class AurousServices {
       return value;
     } catch (error) {
       const elapsedSeconds = ((Date.now() - started) / 1_000).toFixed(1);
-      const outcome = signal?.aborted ? 'cancelled' : 'failed';
+      const outcome =
+        signal?.aborted || (error instanceof AurousError && error.code === 'AUR-AGENT-007')
+          ? 'cancelled'
+          : error instanceof AurousError && error.code === 'AUR-AGENT-003'
+            ? 'timed out'
+            : 'failed';
       this.dependencies.output.log(`Agent invocation ${outcome}: ${phase} (${elapsedSeconds}s).`);
       throw error;
     } finally {
