@@ -195,7 +195,8 @@ export class AurousServices {
       cwd: this.dependencies.workspace,
       paths: options.contextPaths,
     });
-    this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
+    if (!options.embedded)
+      this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
 
     const record: RunRecord = {
       runId,
@@ -257,12 +258,13 @@ export class AurousServices {
         actionCount: plan.plannedActions.length,
       });
       this.dependencies.output.log(`\n${formatPlan(plan)}`);
-      this.dependencies.output.log(
-        `\n${formatPlainNotice('Next', [
-          'No productivity tool has been changed.',
-          `Apply this exact saved plan with: aurous apply ${runId}`,
-        ])}`,
-      );
+      if (!options.embedded)
+        this.dependencies.output.log(
+          `\n${formatPlainNotice('Next', [
+            'No productivity tool has been changed.',
+            `Apply this exact saved plan with: aurous apply ${runId}`,
+          ])}`,
+        );
       return plan;
     } catch (error) {
       const classified = asAurousError(error, runId);
@@ -319,17 +321,17 @@ export class AurousServices {
       paths: options.contextPaths,
     });
     const preset = parseLinearDemoContext(context);
-    this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
-    this.dependencies.output.log(
-      `\n${formatPlainNotice('Destination', [
-        `Preset  ${preset.preset}`,
-        `Team    ${team}`,
-        'Writes  none until explicit approval',
-      ])}`,
-    );
-    this.dependencies.output.log(
-      `\n${formatProgress('Assaying', 'Generating a deterministic Linear plan from approved context.')}`,
-    );
+    if (!options.embedded) {
+      this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
+      this.dependencies.output.log(
+        `\n${formatPlainNotice('Destination', [
+          `Preset  ${preset.preset}`,
+          `Team    ${team}`,
+          'Writes  none until explicit approval',
+        ])}`,
+      );
+    }
+    this.progress('Assaying', 'Generating a deterministic Linear plan from approved context.');
 
     const generatedPlan = buildLinearDemoPlan({
       runId,
@@ -367,9 +369,7 @@ export class AurousServices {
         action.properties.some((property) => property.key === 'linear.dedupe.knownExternalId'),
       ).length,
     });
-    this.dependencies.output.log(
-      formatProgress('Hallmarking', 'Validated plan saved to local run history.'),
-    );
+    this.progress('Hallmarking', 'Validated plan saved to local run history.');
     this.dependencies.output.log(`\n${formatPlan(plan)}`);
     return plan;
   }
@@ -480,18 +480,20 @@ export class AurousServices {
         'AUR-APPLY-100',
         'Apply preview declined; no external writes attempted.',
       );
-      this.dependencies.output.log(
-        `\n${formatPlainNotice('Approval', [
-          'Apply cancelled. No external writes were attempted.',
-        ])}`,
-      );
+      if (!options.embedded)
+        this.dependencies.output.log(
+          `\n${formatPlainNotice('Approval', [
+            'Apply cancelled. No external writes were attempted.',
+          ])}`,
+        );
       return undefined;
     }
-    this.dependencies.output.log(
-      `\n${formatApprovalReceipt(
-        options.confirmed ? 'Explicit --yes approval received.' : 'Typed approval received.',
-      )}`,
-    );
+    if (!options.embedded)
+      this.dependencies.output.log(
+        `\n${formatApprovalReceipt(
+          options.confirmed ? 'Explicit --yes approval received.' : 'Typed approval received.',
+        )}`,
+      );
 
     await this.dependencies.store.updateStatus(runId, 'applying');
     await this.event(
@@ -507,16 +509,20 @@ export class AurousServices {
     try {
       const adapter = this.agentFactory(plan.agent);
       const productivity = createProductivityAdapter(plan.tool);
-      const invocation = await this.withProgress('plan apply', options.signal, () =>
-        adapter.executePlan({
-          workspace: this.dependencies.workspace,
-          runDirectory: this.dependencies.store.runDirectory(runId),
-          plan,
-          productivity,
-          timeoutMs: config.timeoutMs,
-          ...(options.model ? { model: options.model } : {}),
-          ...(options.signal ? { signal: options.signal } : {}),
-        }),
+      const invocation = await this.withProgress(
+        'plan apply',
+        options.signal,
+        () =>
+          adapter.executePlan({
+            workspace: this.dependencies.workspace,
+            runDirectory: this.dependencies.store.runDirectory(runId),
+            plan,
+            productivity,
+            timeoutMs: config.timeoutMs,
+            ...(options.model ? { model: options.model } : {}),
+            ...(options.signal ? { signal: options.signal } : {}),
+          }),
+        plan.plannedActions.length,
       );
       await this.dependencies.store.saveCommandLog(
         runId,
@@ -1211,25 +1217,24 @@ export class AurousServices {
     phase: string,
     signal: AbortSignal | undefined,
     task: () => Promise<T>,
+    actionTotal?: number,
   ): Promise<T> {
     const started = Date.now();
     const progressWord = progressWordFor(phase);
-    this.dependencies.output.log(
-      formatProgress(progressWord, `Agent invocation started: ${phase}.`),
-    );
+    this.progress(progressWord, progressDetail(phase, 'started', actionTotal));
     const timer = setInterval(() => {
       const elapsedSeconds = Math.max(1, Math.round((Date.now() - started) / 1_000));
-      this.dependencies.output.log(
-        formatProgress(progressWord, `Agent invocation in progress: ${phase}.`, elapsedSeconds),
+      this.progress(
+        progressWord,
+        progressDetail(phase, 'in progress', actionTotal),
+        elapsedSeconds,
       );
     }, this.progressIntervalMs);
     timer.unref?.();
     try {
       const value = await task();
       const elapsedSeconds = ((Date.now() - started) / 1_000).toFixed(1);
-      this.dependencies.output.log(
-        formatProgress('Hallmarking', `Agent invocation completed: ${phase}.`, elapsedSeconds),
-      );
+      this.progress('Hallmarking', progressDetail(phase, 'completed', actionTotal), elapsedSeconds);
       return value;
     } catch (error) {
       const elapsedSeconds = ((Date.now() - started) / 1_000).toFixed(1);
@@ -1239,13 +1244,17 @@ export class AurousServices {
           : error instanceof AurousError && error.code === 'AUR-AGENT-003'
             ? 'timed out'
             : 'failed';
-      this.dependencies.output.log(
-        formatProgress('Tempering', `Agent invocation ${outcome}: ${phase}.`, elapsedSeconds),
-      );
+      this.progress('Tempering', `Agent invocation ${outcome}: ${phase}.`, elapsedSeconds);
       throw error;
     } finally {
       clearInterval(timer);
     }
+  }
+
+  private progress(word: ProgressWord, detail: string, elapsedSeconds?: string | number): void {
+    if (this.dependencies.output.progress)
+      this.dependencies.output.progress(word, detail, elapsedSeconds);
+    else this.dependencies.output.log(formatProgress(word, detail, elapsedSeconds));
   }
 
   private event(
@@ -1270,6 +1279,18 @@ function progressWordFor(phase: string): ProgressWord {
   if (phase.includes('plan') || phase.includes('inspection') || phase.includes('verification'))
     return 'Assaying';
   return 'Polishing';
+}
+
+function progressDetail(
+  phase: string,
+  state: 'started' | 'in progress' | 'completed',
+  actionTotal?: number,
+): string {
+  if (phase === 'plan apply' && actionTotal !== undefined) {
+    const completed = state === 'completed' ? actionTotal : 0;
+    return `${state === 'completed' ? 'Approved actions completed' : 'Executing approved workspace actions'} · ${completed}/${actionTotal}`;
+  }
+  return `Agent invocation ${state}: ${phase}.`;
 }
 
 function modelDisplayName(agent: AgentName): string {

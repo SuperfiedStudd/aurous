@@ -6,13 +6,14 @@ import { AurousServices } from './core/services.js';
 import { LocalRunStore } from './core/run-store.js';
 import { consoleOutput, type Output } from './core/output.js';
 import { formatApprovalPrompt } from './core/presentation.js';
-import { AurousShell, type ShellIO } from './core/shell.js';
+import { AurousShell, createReadlineShellTerminal } from './core/shell.js';
+import { DynamicShellRenderer, type ShellTerminal } from './core/shell-renderer.js';
 
 export interface CliDependencies {
   cwd?: string;
   output?: Output;
   confirm?: (question: string, expected?: string) => Promise<boolean>;
-  shellIO?: ShellIO;
+  shellTerminal?: ShellTerminal;
 }
 
 export function createCli(dependencies: CliDependencies = {}): Command {
@@ -37,12 +38,18 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     });
 
   const launchShell = async () => {
+    const terminal = dependencies.shellTerminal ?? createReadlineShellTerminal();
+    const renderer = new DynamicShellRenderer(terminal);
+    const shellServices = new AurousServices({
+      workspace: cwd,
+      store,
+      output: renderer,
+    });
     await new AurousShell({
       workspace: cwd,
       store,
-      services,
-      output: cliOutput,
-      ...(dependencies.shellIO ? { io: dependencies.shellIO } : {}),
+      services: shellServices,
+      renderer,
     }).run();
   };
 

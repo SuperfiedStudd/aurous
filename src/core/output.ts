@@ -1,16 +1,24 @@
 import type { AurousError } from './errors.js';
 import type { AurousPlan, ContextSummary, ExecutionResult, RunRecord } from '../domain/schemas.js';
 import type { RecoveryPlan } from '../domain/recovery.js';
-import { renderPanel, type RenderOptions } from './presentation.js';
+import {
+  formatProgress,
+  renderPanel,
+  type ProgressWord,
+  type RenderOptions,
+} from './presentation.js';
 
 export interface Output {
   log(message?: string): void;
   error(message: string): void;
+  progress?(word: ProgressWord, detail: string, elapsedSeconds?: string | number): void;
 }
 
 export const consoleOutput: Output = {
   log: (message = '') => console.log(message),
   error: (message) => console.error(message),
+  progress: (word, detail, elapsedSeconds) =>
+    console.log(formatProgress(word, detail, elapsedSeconds)),
 };
 
 export function formatContextSummary(summary: ContextSummary, options: RenderOptions = {}): string {

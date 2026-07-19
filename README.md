@@ -22,7 +22,7 @@ aurous
 npm run dev -- shell
 ```
 
-The shell keeps the gold Aurous header, active agent/model, target, project, selected context, preset, team, and latest run visible. Its readline composer supports normal terminal editing, Up/Down command history, Home/End navigation, Ctrl+C, and graceful EOF/exit behavior. Output uses terminal scrollback above the next composer instead of taking over the screen.
+The shell keeps one live gold Aurous surface with the active agent/model, target, project, selected context, preset, team, state, and latest run. On compatible terminals it redraws that surface in place while committing only plans, previews, results, and real failures to normal scrollback. `NO_COLOR`, redirected output, and limited terminals use a clean append-only fallback. The readline composer supports normal terminal editing, duplicate-free Up/Down command history, Home/End navigation, context-aware Ctrl+C, and graceful EOF/exit behavior.
 
 Start with configuration commands when needed, then ask naturally:
 
@@ -35,6 +35,8 @@ Set up Linear for this project using my current context
 ```
 
 A natural-language request selects an explicitly named Notion or Linear target, generates and saves the existing Aurous plan, prints the complete preview, requires the same typed `apply` approval, executes through the existing adapter, records the result, and returns to the composer. The shell starts with the current project (`.`) visible as its context; use `/context` before planning to narrow or replace it.
+
+`/target linear <team>` selects the destination immediately. `/target linear` intentionally leaves the team missing; the next Linear request asks for it, reprompts on blank input, accepts `cancel`, and resumes the suspended request automatically after a valid name, key, or UUID is entered.
 
 Available slash commands are `/help`, `/agent`, `/model`, `/target`, `/context`, `/preset`, `/plan`, `/apply`, `/runs`, `/status`, `/clear`, and `/exit`. Run `/help` inside the shell for accepted arguments.
 

@@ -29,6 +29,7 @@ export interface ShellStatusMetadata {
   model: string;
   target: ToolName;
   mode: string;
+  state?: string;
   project: string;
   contextPaths: string[];
   preset?: string;
@@ -59,11 +60,7 @@ export function formatOpeningHeader(
   options: RenderOptions = {},
 ): string {
   const resolved = resolveRenderOptions(options);
-  const contentWidth = resolved.width - 4;
-  const mark =
-    Math.max(...wordmark.map((line) => line.length)) <= contentWidth
-      ? wordmark
-      : ['A  U  R  O  U  S'];
+  const mark = selectWordmark(resolved);
   const lines = [
     ...mark,
     '',
@@ -72,6 +69,24 @@ export function formatOpeningHeader(
     `agent ${agentDisplayName(metadata.agent)}  ·  target ${toolDisplayName(metadata.target)}  ·  mode ${metadata.mode}`,
     ...(metadata.model ? [`model ${metadata.model}`] : []),
     ...(metadata.runId ? [`run ${metadata.runId}`] : []),
+  ];
+  return renderPanel('', lines, resolved, new Set(mark.map((_line, index) => index)));
+}
+
+export function formatInteractiveHeader(
+  metadata: ShellStatusMetadata,
+  options: RenderOptions = {},
+): string {
+  const resolved = resolveRenderOptions(options);
+  const mark = selectWordmark(resolved);
+  const lines = [
+    ...mark,
+    'AUROUS · PRODUCTIVITY, RESOLVED.',
+    '',
+    `agent ${agentDisplayName(metadata.agent)}  ·  model ${metadata.model}  ·  target ${toolDisplayName(metadata.target)}${metadata.linearTeam ? `  ·  team ${metadata.linearTeam}` : ''}`,
+    `project ${metadata.project}  ·  context ${metadata.contextPaths.join(', ')}`,
+    `mode ${metadata.mode}  ·  state ${metadata.state ?? metadata.mode}${metadata.preset ? `  ·  preset ${metadata.preset}` : ''}`,
+    ...(metadata.lastRunId ? [`run ${metadata.lastRunId}`] : []),
   ];
   return renderPanel('', lines, resolved, new Set(mark.map((_line, index) => index)));
 }
@@ -142,6 +157,7 @@ export function formatShellStatus(
     [
       `agent    ${agentDisplayName(metadata.agent)}  ·  model ${metadata.model}`,
       `target   ${toolDisplayName(metadata.target)}  ·  mode ${metadata.mode}`,
+      ...(metadata.state ? [`state    ${metadata.state}`] : []),
       `project  ${metadata.project}`,
       `context  ${metadata.contextPaths.join(', ')}`,
       ...(metadata.preset ? [`preset   ${metadata.preset}`] : []),
@@ -152,23 +168,21 @@ export function formatShellStatus(
   );
 }
 
-export function formatComposerFrame(options: RenderOptions = {}): string {
-  const resolved = resolveRenderOptions(options);
-  return renderPanel(
-    'Request',
-    [
-      `Ask Aurous to set up your workspace, or type /help.  ${resolved.unicode ? '↑↓' : 'Up/Down'} history · Ctrl+C exit`,
-    ],
-    resolved,
-  );
-}
-
 export function formatComposerPrompt(options: RenderOptions = {}): string {
   return formatInputPrompt('aurous', options);
 }
 
 export function formatInputPrompt(label: string, options: RenderOptions = {}): string {
   return `${gold(`${label} ›`, resolveRenderOptions(options), true)} `;
+}
+
+export function formatInlineNotice(
+  message: string,
+  tone: 'success' | 'warning' | 'neutral' = 'neutral',
+  options: RenderOptions = {},
+): string {
+  const prefix = tone === 'success' ? '✓' : tone === 'warning' ? '!' : '•';
+  return gold(`${prefix} ${message}`, resolveRenderOptions(options), tone === 'success');
 }
 
 export function formatPlainNotice(
@@ -202,6 +216,13 @@ function supportsColor(): boolean {
   if (process.env.TERM === 'dumb') return false;
   if (process.env.FORCE_COLOR && process.env.FORCE_COLOR !== '0') return true;
   return Boolean(process.stdout.isTTY);
+}
+
+function selectWordmark(options: ResolvedRenderOptions): string[] {
+  const contentWidth = options.width - 4;
+  return Math.max(...wordmark.map((line) => line.length)) <= contentWidth
+    ? wordmark
+    : ['A  U  R  O  U  S'];
 }
 
 function splitAndWrap(value: string, width: number): string[] {
