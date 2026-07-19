@@ -45,6 +45,15 @@ describe('AurousServices mock flow', () => {
     expect(plan.agent).toBe('mock');
     expect(plan.tool).toBe('notion');
     expect(plan.plannedActions).toHaveLength(5);
+    expect(
+      plan.plannedActions.every((action) =>
+        action.properties.some(
+          (property) =>
+            property.key === 'notion.destination.parentPageId' &&
+            property.value === 'mock-notion-private-page',
+        ),
+      ),
+    ).toBe(true);
     expect(capture.lines.join('\n')).toContain('Context summary (shown before agent invocation)');
     expect((await store.getRun(plan.runId)).status).toBe('planned');
 
@@ -219,5 +228,55 @@ describe('AurousServices mock flow', () => {
       code: 'AUR-AGENT-003',
     });
     expect(capture.lines.join('\n')).toContain('Agent invocation timed out: plan apply');
+  });
+
+  it('rejects unresolved destination placeholders before a plan can be approved', async () => {
+    const { store, workspace, capture } = await fixture();
+    const mock = new MockAgentAdapter();
+    const unresolved: AgentAdapter = {
+      name: 'mock',
+      diagnose: () => mock.diagnose(),
+      discoverDestinations: (input) => mock.discoverDestinations(input),
+      generatePlan: async (input) => {
+        const invocation = await mock.generatePlan(input);
+        return {
+          ...invocation,
+          value: {
+            ...invocation.value,
+            plannedActions: invocation.value.plannedActions.map((action, index) =>
+              index === 0
+                ? {
+                    ...action,
+                    properties: [
+                      ...action.properties,
+                      { key: 'notion.parent', value: 'user-selected-parent' },
+                    ],
+                  }
+                : action,
+            ),
+          },
+        };
+      },
+      executePlan: (input) => mock.executePlan(input),
+      inspectRecovery: (input) => mock.inspectRecovery(input),
+      executeRecoveryAction: (input) => mock.executeRecoveryAction(input),
+      manualFallback: (directory, phase, prompt) => mock.manualFallback(directory, phase, prompt),
+    };
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => unresolved,
+    });
+
+    await expect(
+      services.plan({
+        agent: 'mock',
+        tool: 'notion',
+        contextPaths: ['.'],
+        objective: 'Create a safe Notion workspace',
+      }),
+    ).rejects.toMatchObject({ code: 'AUR-PLAN-005' });
+    expect((await store.listRuns())[0]?.status).toBe('failed');
   });
 });

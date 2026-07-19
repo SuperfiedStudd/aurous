@@ -75,10 +75,11 @@ export function buildLinearDemoPlan(input: {
   createdAt: string;
   agent: AurousPlan['agent'];
   team: string;
+  teamId: string;
   context: ContextBundle;
   preset: LinearDemoContext;
 }): AurousPlan {
-  const { preset, team } = input;
+  const { preset, team, teamId } = input;
   const workstreams = new Map(preset.workstreams.map((item) => [item.name, item]));
   const milestones = new Set(preset.milestones.map((item) => item.name));
   for (const task of preset.knownTasks) {
@@ -105,6 +106,7 @@ export function buildLinearDemoPlan(input: {
     description: 'Create the context-specific launch project in the selected Linear team.',
     properties: properties({
       'linear.team': team,
+      'linear.teamId': teamId,
       'linear.summary': preset.summary,
       'linear.description': projectDescription(preset),
       'linear.priority': '2',
@@ -126,6 +128,7 @@ export function buildLinearDemoPlan(input: {
         description: `Create a namespaced label for the ${workstream.name} workstream.`,
         properties: properties({
           'linear.team': team,
+          'linear.teamId': teamId,
           'linear.color': workstreamColor(labelActions.size),
           'linear.description': workstream.outcome,
           'linear.dedupe': 'exact-name-in-selected-team',
@@ -164,6 +167,7 @@ export function buildLinearDemoPlan(input: {
       description: task.description,
       properties: properties({
         'linear.team': team,
+        'linear.teamId': teamId,
         'linear.project': preset.projectName,
         'linear.milestone': task.milestone,
         'linear.priority': String(priorityNumber(task.priority)),

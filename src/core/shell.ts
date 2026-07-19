@@ -14,6 +14,8 @@ import { formatError } from './output.js';
 import { formatApprovalRequest, formatPlainNotice, formatShellStatus } from './presentation.js';
 import type { RunStore } from './run-store.js';
 import type { AurousServices } from './services.js';
+import { ContextPackStore, detectProjectRoot, destinationFor } from './context-pack.js';
+import type { DestinationChoiceRequest } from './destination-resolver.js';
 import {
   DynamicShellRenderer,
   type ShellPhase,
@@ -36,6 +38,7 @@ export interface ShellSnapshot {
   contextPaths: string[];
   preset?: string;
   linearTeam?: string;
+  destinationName?: string;
   lastRunId?: string;
   history: string[];
   state: ShellPhase;
@@ -44,9 +47,11 @@ export interface ShellSnapshot {
 interface ShellState extends ShellSnapshot {
   project: string;
   lastRequest?: string;
+  destinationHint?: string;
+  destinationOverride?: { integration: ToolName; id: string; name: string };
 }
 
-type PromptKind = 'composer' | 'team' | 'approval';
+type PromptKind = 'composer' | 'destination' | 'approval';
 
 export class AurousShell {
   private readonly terminal: ShellTerminal;
@@ -78,6 +83,7 @@ export class AurousShell {
       state: 'Ready',
       project: path.basename(this.dependencies.workspace),
     };
+    await this.refreshContextDestination();
     this.terminal.onInterrupt(() => this.handleInterrupt());
     this.dependencies.renderer.start(this.view());
 
@@ -115,6 +121,7 @@ export class AurousShell {
       contextPaths: [...state.contextPaths],
       ...(state.preset ? { preset: state.preset } : {}),
       ...(state.linearTeam ? { linearTeam: state.linearTeam } : {}),
+      ...(state.destinationName ? { destinationName: state.destinationName } : {}),
       ...(state.lastRunId ? { lastRunId: state.lastRunId } : {}),
       history: [...state.history],
       state: state.state,
@@ -139,10 +146,10 @@ export class AurousShell {
         this.selectModel(args);
         return;
       case '/target':
-        this.selectTarget(args);
+        await this.selectTarget(args);
         return;
       case '/context':
-        await this.selectContext(args);
+        await this.contextCommand(args);
         return;
       case '/preset':
         this.selectPreset(args);
@@ -228,7 +235,7 @@ export class AurousShell {
     this.setReady(`Model ${state.model}`);
   }
 
-  private selectTarget(args: string[]): void {
+  private async selectTarget(args: string[]): Promise<void> {
     const state = this.requireState();
     if (args.length === 0) {
       this.dependencies.renderer.notice(targetSummary(state));
@@ -237,25 +244,73 @@ export class AurousShell {
     const parsed = ToolNameSchema.safeParse(args[0]?.toLowerCase());
     if (!parsed.success) throw shellInputError('target', 'Choose notion, linear, or mock.');
     state.target = parsed.data;
-    if (parsed.data === 'linear') {
-      if (args.length > 1) {
-        const team = validateTeam(args.slice(1).join(' '));
-        if (!team.valid) throw shellInputError('team', team.message);
-        state.linearTeam = team.value;
-        this.setReady(`Target Linear · team ${team.value}`);
-      } else {
-        delete state.linearTeam;
-        this.setReady('Target Linear · team not selected', 'warning');
-      }
-      return;
-    }
-    this.setReady(`Target ${displayTarget(state.target)}`);
+    delete state.destinationName;
+    delete state.linearTeam;
+    if (args.length > 1) state.destinationHint = args.slice(1).join(' ').trim();
+    else delete state.destinationHint;
+    await this.refreshContextDestination();
+    this.setReady(targetSummary(state));
   }
 
-  private async selectContext(args: string[]): Promise<void> {
+  private async contextCommand(args: string[]): Promise<void> {
     const state = this.requireState();
     if (args.length === 0) {
       this.dependencies.renderer.notice(`Context ${state.contextPaths.join(', ')}`);
+      return;
+    }
+    const subcommand = args[0]?.toLowerCase();
+    if (subcommand === 'show' || subcommand === 'destinations') {
+      const pack = await this.contextStore().then((store) => store.loadOrCreate(state.preset));
+      const lines =
+        subcommand === 'show'
+          ? [
+              `project       ${pack.project.name}`,
+              `root          ${pack.project.root}`,
+              `summary       ${pack.project.summary ?? 'not available'}`,
+              `preset        ${pack.selectedPreset ?? 'none'}`,
+              `integrations  ${pack.activeIntegrations.join(', ') || 'none'}`,
+              `updated       ${pack.updatedAt}`,
+            ]
+          : pack.destinations.length > 0
+            ? pack.destinations.flatMap((destination) => [
+                `${displayTarget(destination.integration)} · ${destination.name}`,
+                `  exact ID   ${destination.id}`,
+                `  source     ${destination.source} · verified ${destination.verifiedAt}`,
+              ])
+            : ['No integration destinations are saved for this project.'];
+      this.dependencies.renderer.showOverlay(
+        formatPlainNotice(
+          subcommand === 'show' ? 'Project Context' : 'Resolved Destinations',
+          lines,
+          this.terminal.renderOptions,
+        ),
+      );
+      return;
+    }
+    if (subcommand === 'forget') {
+      const parsed = ToolNameSchema.safeParse(args[1]?.toLowerCase());
+      if (!parsed.success) throw shellInputError('context', 'Use /context forget notion|linear.');
+      const store = await this.contextStore();
+      await store.forgetDestination(parsed.data);
+      if (state.target === parsed.data) {
+        delete state.destinationName;
+        delete state.linearTeam;
+      }
+      if (state.destinationOverride?.integration === parsed.data) delete state.destinationOverride;
+      this.setReady(`Forgot the saved ${displayTarget(parsed.data)} destination.`, 'warning');
+      return;
+    }
+    if (subcommand === 'override') {
+      const parsed = ToolNameSchema.safeParse(args[1]?.toLowerCase());
+      const id = args[2]?.trim();
+      const name = args.slice(3).join(' ').trim();
+      if (!parsed.success || !id || !name)
+        throw shellInputError(
+          'context',
+          'Advanced usage: /context override notion|linear <id-or-url> <friendly-name>.',
+        );
+      state.destinationOverride = { integration: parsed.data, id, name };
+      this.setReady(`Advanced ${displayTarget(parsed.data)} destination override staged.`);
       return;
     }
     const context = await ingestContext({ cwd: this.dependencies.workspace, paths: args });
@@ -277,18 +332,11 @@ export class AurousShell {
       state.preset = 'software-launch';
     else throw shellInputError('preset', 'Choose software-launch or none.');
     this.setReady(`Preset ${state.preset ?? 'none'}`);
+    void this.contextStore().then((store) => store.setPreset(state.preset));
   }
 
   private async plan(objective?: string): Promise<boolean> {
     const state = this.requireState();
-    if (state.target === 'linear' && state.preset === 'software-launch') {
-      const team = await this.requireLinearTeam();
-      if (!team) {
-        this.setReady('Pending Linear request canceled.', 'warning');
-        return false;
-      }
-    }
-
     this.setPhase('Planning');
     const controller = this.beginActivity();
     const model = invocationModel(state);
@@ -297,8 +345,22 @@ export class AurousShell {
         state.target === 'linear' && state.preset === 'software-launch'
           ? await this.dependencies.services.planLinearDemo({
               agent: state.agent,
-              team: state.linearTeam!,
+              ...((objective ?? state.lastRequest)
+                ? {
+                    objective: `${objective ?? state.lastRequest}${state.destinationHint ? ` Use ${state.destinationHint}.` : ''}`,
+                  }
+                : {}),
+              ...(state.destinationHint ? { team: state.destinationHint } : {}),
               contextPaths: state.contextPaths,
+              chooseDestination: (request) => this.chooseDestination(request),
+              ...(state.destinationOverride?.integration === state.target
+                ? {
+                    destinationOverride: {
+                      id: state.destinationOverride.id,
+                      name: state.destinationOverride.name,
+                    },
+                  }
+                : {}),
               ...(model ? { model } : {}),
               embedded: true,
             })
@@ -306,15 +368,28 @@ export class AurousShell {
               agent: state.agent,
               tool: state.target,
               contextPaths: state.contextPaths,
-              objective:
+              objective: `${
                 objective ??
                 state.lastRequest ??
-                `Set up ${displayTarget(state.target)} for ${state.project} using the selected context.`,
+                `Set up ${displayTarget(state.target)} for ${state.project} using the selected context.`
+              }${state.destinationHint ? ` Use ${state.destinationHint}.` : ''}`,
               ...(model ? { model } : {}),
+              chooseDestination: (request) => this.chooseDestination(request),
+              ...(state.destinationOverride?.integration === state.target
+                ? {
+                    destinationOverride: {
+                      id: state.destinationOverride.id,
+                      name: state.destinationOverride.name,
+                    },
+                  }
+                : {}),
+              ...(state.preset ? { preset: state.preset } : {}),
               embedded: true,
               signal: controller.signal,
             });
       state.lastRunId = plan.runId;
+      delete state.destinationOverride;
+      await this.refreshContextDestination();
       state.state = 'Awaiting Approval';
       this.dependencies.renderer.update(this.view());
       this.dependencies.renderer.notice(
@@ -365,13 +440,23 @@ export class AurousShell {
     }
   }
 
-  private async requireLinearTeam(): Promise<string | undefined> {
+  private async chooseDestination(request: DestinationChoiceRequest): Promise<number | undefined> {
     const state = this.requireState();
-    if (state.linearTeam) return state.linearTeam;
     while (!this.exitRequested) {
-      state.state = 'Selecting Team';
+      state.state = 'Selecting Destination';
       this.dependencies.renderer.update(this.view());
-      const answer = await this.ask('team', 'team', true);
+      this.dependencies.renderer.showOverlay(
+        formatPlainNotice(
+          request.question,
+          [
+            `Aurous found ${request.candidates.length} available choices.`,
+            '',
+            ...request.candidates.map((candidate, index) => `${index + 1}. ${candidate.name}`),
+          ],
+          this.terminal.renderOptions,
+        ),
+      );
+      const answer = await this.ask('destination', 'destination', true);
       if (answer === undefined) {
         if (this.consumePromptCancellation()) return undefined;
         this.exitRequested = true;
@@ -379,14 +464,26 @@ export class AurousShell {
       }
       const value = answer.trim();
       if (value.toLowerCase() === 'cancel') return undefined;
-      const team = validateTeam(value);
-      if (!team.valid) {
-        this.dependencies.renderer.recoverable(team.message);
+      if (!value) {
+        this.dependencies.renderer.recoverable(
+          `Choose 1–${request.candidates.length}, or type cancel.`,
+        );
         continue;
       }
-      state.linearTeam = team.value;
-      this.dependencies.renderer.notice(`Linear team ${team.value}`);
-      return team.value;
+      const choice = Number(value);
+      if (!Number.isInteger(choice) || choice < 1 || choice > request.candidates.length) {
+        this.dependencies.renderer.recoverable(
+          `Choose 1–${request.candidates.length}, or type cancel.`,
+        );
+        continue;
+      }
+      const selected = request.candidates[choice - 1]!;
+      state.destinationName = selected.name;
+      if (request.integration === 'linear') state.linearTeam = selected.name;
+      state.state = 'Planning';
+      this.dependencies.renderer.dismissOverlay();
+      this.dependencies.renderer.update(this.view());
+      return choice - 1;
     }
     return undefined;
   }
@@ -397,7 +494,7 @@ export class AurousShell {
     this.dependencies.renderer.update(this.view());
     this.dependencies.renderer.showOverlay(
       formatApprovalRequest(
-        'Execute exactly this saved plan through the configured MCP?',
+        'Apply exactly this saved plan to the connected integration?',
         'apply',
         this.terminal.renderOptions,
       ),
@@ -428,7 +525,8 @@ export class AurousShell {
         'Help',
         [
           '/agent · /model · /target     runtime selection',
-          '/context · /preset            planning inputs',
+          '/context [paths] · /preset    planning inputs',
+          '/context show · destinations · forget <integration>',
           '/plan · /apply                workflow control',
           '/runs · /status               local run state',
           '/clear · /exit                shell control',
@@ -447,8 +545,19 @@ export class AurousShell {
   private handleError(error: unknown): void {
     const classified = asAurousError(error, this.state?.lastRunId);
     const code = classified.code;
-    if (code.startsWith('AUR-SHELL') || code.startsWith('AUR-CTX')) {
-      this.setReady(`${classified.message} ${classified.nextAction}`, 'warning');
+    if (
+      code.startsWith('AUR-SHELL') ||
+      code.startsWith('AUR-CTX') ||
+      code.startsWith('AUR-CONTEXT') ||
+      code.startsWith('AUR-DEST') ||
+      code === 'AUR-APPLY-004'
+    ) {
+      this.setReady(
+        code === 'AUR-DEST-001'
+          ? classified.message
+          : `${classified.message} ${classified.nextAction}`,
+        'warning',
+      );
       return;
     }
     const internal = code.startsWith('AUR-CORE');
@@ -489,6 +598,7 @@ export class AurousShell {
       contextPaths: state.contextPaths,
       ...(state.target === 'linear' && state.preset ? { preset: state.preset } : {}),
       ...(state.target === 'linear' && state.linearTeam ? { linearTeam: state.linearTeam } : {}),
+      ...(state.destinationName ? { destination: state.destinationName } : {}),
       ...(state.lastRunId ? { lastRunId: state.lastRunId } : {}),
       hint: hintFor(state),
     };
@@ -553,7 +663,7 @@ export class AurousShell {
       this.dependencies.renderer.recoverable(
         this.activePrompt === 'composer'
           ? 'Input canceled. Press Ctrl+C again to exit.'
-          : `${this.activePrompt === 'team' ? 'Team selection' : 'Approval'} canceled.`,
+          : `${this.activePrompt === 'destination' ? 'Destination selection' : 'Approval'} canceled.`,
       );
       return;
     }
@@ -573,6 +683,21 @@ export class AurousShell {
       if (error instanceof AurousError && error.code === 'AUR-STATE-002')
         return this.dependencies.store.init();
       throw error;
+    }
+  }
+
+  private async contextStore(): Promise<ContextPackStore> {
+    return new ContextPackStore(await detectProjectRoot(this.dependencies.workspace));
+  }
+
+  private async refreshContextDestination(): Promise<void> {
+    if (!this.state) return;
+    const pack = await (await this.contextStore()).loadOrCreate(this.state.preset);
+    this.state.project = pack.project.name;
+    const destination = destinationFor(pack, this.state.target);
+    if (destination) {
+      this.state.destinationName = destination.name;
+      if (this.state.target === 'linear') this.state.linearTeam = destination.name;
     }
   }
 }
@@ -677,8 +802,8 @@ export function tokenize(input: string): string[] {
 
 function hintFor(state: ShellState): string {
   switch (state.state) {
-    case 'Selecting Team':
-      return 'Select a Linear team before planning, or type cancel.';
+    case 'Selecting Destination':
+      return 'Choose a destination by number, or type cancel.';
     case 'Planning':
       return 'Assaying project context and generating the workspace plan.';
     case 'Awaiting Approval':
@@ -690,9 +815,7 @@ function hintFor(state: ShellState): string {
     case 'Error':
       return 'The workflow stopped safely. Review the message, then try again.';
     default:
-      return state.target === 'linear' && !state.linearTeam
-        ? 'Select a Linear team before planning.'
-        : 'Ask Aurous to configure a workspace or type /help.';
+      return 'Ask Aurous to configure a workspace or type /help.';
   }
 }
 
@@ -718,27 +841,7 @@ function displayTarget(target: ToolName): string {
 }
 
 function targetSummary(state: ShellState): string {
-  if (state.target !== 'linear') return `Target ${displayTarget(state.target)}`;
-  return `Target Linear · team ${state.linearTeam ?? 'not selected'}`;
-}
-
-type TeamValidation = { valid: true; value: string } | { valid: false; message: string };
-
-function validateTeam(value: string): TeamValidation {
-  const team = value.trim();
-  if (!team) return { valid: false, message: 'Enter a team name, key, or UUID; or type cancel.' };
-  if (
-    team.length > 100 ||
-    [...team].some((character) => {
-      const code = character.charCodeAt(0);
-      return code <= 31 || code === 127;
-    })
-  )
-    return {
-      valid: false,
-      message: 'Unsupported team value. Enter a name, key, or UUID; or type cancel.',
-    };
-  return { valid: true, value: team };
+  return `Target ${displayTarget(state.target)}${state.destinationName ? ` · ${state.destinationName}` : ''}`;
 }
 
 function shellInputError(field: string, nextAction: string): AurousError {

@@ -8,7 +8,9 @@ import {
   type ParsedExecutionResult,
 } from '../../domain/schemas.js';
 import { RecoveryInspectionSchema } from '../../domain/recovery.js';
+import { DestinationDiscoverySchema } from '../../domain/destinations.js';
 import {
+  buildDestinationDiscoveryPrompt,
   buildExecutionPrompt,
   buildPlanningPrompt,
   buildRecoveryActionPrompt,
@@ -18,6 +20,7 @@ import { commandFailure, parseJsonPayload, writeManualPrompt, type AgentPhase } 
 import type {
   AgentAdapter,
   AgentDiagnostic,
+  DestinationDiscoveryInput,
   InvocationRecord,
   PlanExecutionInput,
   PlanGenerationInput,
@@ -77,9 +80,28 @@ export class ClaudeAgentAdapter implements AgentAdapter {
   }
 
   async generatePlan(input: PlanGenerationInput) {
-    const prompt = buildPlanningPrompt(input.objective, input.context, input.productivity);
+    const prompt = buildPlanningPrompt(
+      input.objective,
+      input.context,
+      input.productivity,
+      input.destination,
+    );
     await this.requireReady(input.runDirectory, 'plan', prompt);
     return this.invoke(input, 'plan', prompt, (value) => PlanProposalResponseSchema.parse(value));
+  }
+
+  async discoverDestinations(input: DestinationDiscoveryInput) {
+    const prompt = buildDestinationDiscoveryPrompt(input);
+    await this.requireMcpReady(
+      input.runDirectory,
+      'destination-discover',
+      prompt,
+      input.productivity.name,
+      input.discoveryId,
+    );
+    return this.invoke(input, 'destination-discover', prompt, (value) =>
+      DestinationDiscoverySchema.parse(value),
+    );
   }
 
   async executePlan(input: PlanExecutionInput) {
@@ -150,6 +172,16 @@ export class ClaudeAgentAdapter implements AgentAdapter {
     const diagnostic = await this.requireReady(runDirectory, phase, prompt);
     if (tool !== 'mock' && diagnostic.mcp[tool].status !== 'ready') {
       const fallback = await this.manualFallback(runDirectory, phase, prompt);
+      if (phase === 'destination-discover') {
+        throw new AurousError({
+          code: 'AUR-DEST-008',
+          summary: `${tool === 'notion' ? 'Notion' : 'Linear'} is not connected to Claude Code yet.`,
+          probableCause: 'The selected local agent cannot access this integration.',
+          nextAction: `Connect ${tool === 'notion' ? 'Notion' : 'Linear'} in Claude Code, then repeat the request.`,
+          severity: 'recoverable',
+          runId,
+        });
+      }
       throw new AurousError({
         code: 'AUR-MCP-001',
         summary: `${tool} MCP is not ready in Claude Code.`,
@@ -183,6 +215,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
   private async invoke<T>(
     input:
       | PlanGenerationInput
+      | DestinationDiscoveryInput
       | PlanExecutionInput
       | RecoveryInspectionInput
       | RecoveryActionExecutionInput,
@@ -271,11 +304,13 @@ function normalizeExecutionInvocation(
 function invocationRunId(
   input:
     | PlanGenerationInput
+    | DestinationDiscoveryInput
     | PlanExecutionInput
     | RecoveryInspectionInput
     | RecoveryActionExecutionInput,
 ): string {
   if ('runId' in input) return input.runId;
+  if ('discoveryId' in input) return input.discoveryId;
   if ('plan' in input) return input.plan.runId;
   if ('recoveryRunId' in input) return input.recoveryRunId;
   return input.recoveryPlan.recoveryRunId;

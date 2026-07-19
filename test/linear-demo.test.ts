@@ -41,6 +41,7 @@ describe('Linear demo planning', () => {
       createdAt: '2026-07-19T12:00:00.000Z',
       agent: 'codex' as const,
       team: 'JasjyotSingh',
+      teamId: 'team-jasjyotsingh-exact-id',
       context,
       preset,
     };
@@ -95,7 +96,6 @@ describe('Linear demo planning', () => {
     await services.init({ defaultAgent: 'mock', defaultTool: 'linear' });
 
     const plan = await services.planLinearDemo({
-      team: 'JasjyotSingh',
       contextPaths: ['linear-demo.json'],
     });
     const result = await services.apply(plan.runId, {
@@ -119,7 +119,6 @@ describe('Linear demo planning', () => {
     const planning = new AurousServices({ workspace, store, output });
     await planning.init({ defaultAgent: 'mock', defaultTool: 'linear' });
     const plan = await planning.planLinearDemo({
-      team: 'JasjyotSingh',
       contextPaths: ['linear-demo.json'],
     });
     const mock = new MockAgentAdapter();
@@ -180,13 +179,11 @@ describe('Linear demo planning', () => {
     const services = new AurousServices({ workspace, store, output });
     await services.init({ defaultAgent: 'mock', defaultTool: 'linear' });
     const first = await services.planLinearDemo({
-      team: 'JasjyotSingh',
       contextPaths: ['linear-demo.json'],
     });
     await services.apply(first.runId, { confirmed: true });
 
     const repeat = await services.planLinearDemo({
-      team: 'JasjyotSingh',
       contextPaths: ['linear-demo.json'],
     });
 

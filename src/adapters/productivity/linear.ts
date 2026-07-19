@@ -1,8 +1,73 @@
 import type { AurousPlan } from '../../domain/schemas.js';
 import type { ProductivityAdapter } from './types.js';
+import type { DestinationCandidate, ResolvedDestination } from '../../domain/destinations.js';
+import type { PlanProposal } from '../../domain/schemas.js';
 
 export class LinearAdapter implements ProductivityAdapter {
   readonly name = 'linear' as const;
+  readonly destination = {
+    kind: 'team',
+    exactIdProperty: 'linear.teamId',
+    persistenceKey: 'destinations.linear',
+    friendlyLabel: 'Linear team',
+    pluralLabel: 'Linear teams',
+    question: 'Which team should Aurous use?',
+    unavailableMessage:
+      'Aurous cannot access a Linear team yet; ask a workspace admin to grant the connected account access, then try again.',
+    recoveryMessage: 'Ask a Linear workspace admin to give the connected account access to a team.',
+    discoveryInstructions: `Use only the official Linear MCP and perform read-only calls. Discover every accessible team and preserve each exact team ID and friendly name. For each team, inspect matching projects, milestones, labels, and issues relevant to the supplied project name and objective. Mark an existingAurousMatch only when an exact object inspection supports it. Never create, update, archive, or delete anything.`,
+  } as const;
+
+  rankDestinationCandidates(candidates: DestinationCandidate[]): DestinationCandidate[] {
+    return [...candidates].sort((a, b) => {
+      if (a.existingAurousMatch !== b.existingAurousMatch) return a.existingAurousMatch ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  destinationPlanningInstructions(destination: ResolvedDestination): string {
+    return `The exact approved Linear team ID is ${JSON.stringify(destination.id)} (${destination.name}). Put linear.teamId=${JSON.stringify(destination.id)} and linear.team=${JSON.stringify(destination.name)} on every action. Existing projects, milestones, labels, and issues may be reused only by exact IDs from the discovery snapshot.`;
+  }
+
+  bindDestination(proposal: PlanProposal, destination: ResolvedDestination): PlanProposal {
+    return {
+      ...proposal,
+      plannedActions: proposal.plannedActions.map((action) => {
+        const existing = destination.existingObjects.find(
+          (object) => object.name === action.target && object.type === action.objectType,
+        );
+        const properties = action.properties.filter((property) => {
+          if (property.key === 'linear.team' || property.key === 'linear.teamId') return false;
+          if (
+            existing &&
+            (property.key === 'linear.dedupe.knownExternalId' ||
+              property.key === 'linear.dedupe.knownUrl')
+          )
+            return false;
+          return true;
+        });
+        properties.push(
+          { key: 'linear.team', value: destination.name },
+          { key: 'linear.teamId', value: destination.id },
+        );
+        if (existing) {
+          properties.push({ key: 'linear.dedupe.knownExternalId', value: existing.id });
+          if (existing.url) properties.push({ key: 'linear.dedupe.knownUrl', value: existing.url });
+        }
+        return {
+          ...action,
+          description: existing
+            ? `Reuse the exact verified existing ${action.objectType} ${JSON.stringify(existing.name)} when compatible. ${action.description}`
+            : action.description,
+          properties,
+        };
+      }),
+      assumptions: [
+        ...proposal.assumptions,
+        `The exact verified Linear team is ${destination.name}; its internal ID is embedded in every action.`,
+      ],
+    };
+  }
 
   planningInstructions(objective: string): string {
     return `Design a Linear-native workspace for this objective: ${objective}
@@ -14,7 +79,7 @@ Prefer a focused project with a clear description, milestones or cycles only whe
     return `Use only the configured official Linear MCP. The approved plan contains ${plan.plannedActions.length} actions.
 
 LINEAR DEMO CONTRACT:
-- Resolve only the approved team from linear.team. Before writes, inspect that team's statuses and resolve the assignee token. Never select a different team.
+- Resolve only the exact approved team ID from linear.teamId. linear.team is display-only. Before writes, inspect that team's statuses and resolve the assignee token. Never select a different team.
 - Execute actions in dependency order. Map linear.* properties directly to the official MCP fields for project, issue label, milestone, and issue creation.
 - If an action has linear.dedupe.knownExternalId, fetch that exact ID first and verify its type, title/name, approved team, and approved project where applicable. A compatible exact-ID match must be skipped and is authoritative even if same-title duplicates exist. Exclude that action from all name inventories. If exact-ID verification fails, fail the action and do not fall back to name lookup or creation.
 - Label exact-ID verification uses the MCP capability that actually exists: call list_issue_labels once for the approved team with limit 250 and no name filter, locate each known label by its exact ID, then verify its exact name. This is exact-ID verification, not name fallback. If the known label ID is absent or its name differs, fail that action and never create a replacement.

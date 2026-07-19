@@ -56,8 +56,17 @@ export function formatPlan(plan: AurousPlan, options: RenderOptions = {}): strin
       `${action.id}  ${action.operation.toUpperCase()} ${action.objectType}  ${action.target}`,
       `  ${action.description}`,
     );
-    for (const property of action.properties)
+    let exactReuseShown = false;
+    for (const property of action.properties) {
+      if (!options.verbose && isHiddenDestinationProperty(property.key)) {
+        if (property.key.endsWith('.dedupe.knownExternalId') && !exactReuseShown) {
+          previewLines.push('  reuse: exact existing object verified during read-only inspection');
+          exactReuseShown = true;
+        }
+        continue;
+      }
       previewLines.push(`  ${property.key}: ${property.value}`);
+    }
     if (action.dependsOn.length > 0)
       previewLines.push(`  depends on: ${action.dependsOn.join(', ')}`);
     previewLines.push('');
@@ -74,6 +83,16 @@ export function formatPlan(plan: AurousPlan, options: RenderOptions = {}): strin
     previewLines.push('Destructive actions  none');
   }
   return `${renderPanel('Plan', planLines, options)}\n${renderPanel('Preview', trimBlankEnd(previewLines), options)}`;
+}
+
+function isHiddenDestinationProperty(key: string): boolean {
+  return (
+    key === 'notion.destination.parentPageId' ||
+    key === 'linear.teamId' ||
+    key === 'mock.workspaceId' ||
+    key.endsWith('.dedupe.knownExternalId') ||
+    key.endsWith('.dedupe.knownUrl')
+  );
 }
 
 export function formatExecutionResult(

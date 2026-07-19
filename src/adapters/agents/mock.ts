@@ -2,6 +2,7 @@ import type { ActionPropertyEntry, PlanAction, PlanProposal } from '../../domain
 import type {
   AgentAdapter,
   AgentDiagnostic,
+  DestinationDiscoveryInput,
   PlanExecutionInput,
   PlanGenerationInput,
   RecoveryActionExecutionInput,
@@ -36,6 +37,51 @@ export class MockAgentAdapter implements AgentAdapter {
       stdout: JSON.stringify(value),
       stderr: '',
       durationMs: Date.now() - started,
+    });
+  }
+
+  discoverDestinations(input: DestinationDiscoveryInput) {
+    const inspectedAt = new Date().toISOString();
+    const candidate =
+      input.productivity.name === 'notion'
+        ? {
+            id: 'mock-notion-private-page',
+            name: 'Private workspace',
+            kind: 'page',
+            description: 'Private Notion workspace page',
+            url: 'https://notion.so/mock-private-page',
+            existingAurousMatch: false,
+          }
+        : input.productivity.name === 'linear'
+          ? {
+              id: 'mock-linear-team-id',
+              name: 'Product team',
+              kind: 'team',
+              description: 'Product delivery team',
+              url: null,
+              existingAurousMatch: false,
+            }
+          : {
+              id: 'mock-workspace-id',
+              name: 'Local workspace',
+              kind: 'workspace',
+              description: 'Local deterministic workspace',
+              url: null,
+              existingAurousMatch: false,
+            };
+    const value = {
+      integration: input.productivity.name,
+      candidates: [candidate],
+      existingObjects: [],
+      inspectedAt,
+      warnings: ['Mock discovery made no external reads.'],
+    };
+    return Promise.resolve({
+      value,
+      command: ['aurous-internal-mock', 'destination-discover'],
+      stdout: JSON.stringify(value),
+      stderr: '',
+      durationMs: 0,
     });
   }
 
@@ -160,7 +206,7 @@ export class MockAgentAdapter implements AgentAdapter {
 
   manualFallback(
     runDirectory: string,
-    phase: 'plan' | 'apply' | 'recover-inspect' | 'recover-apply',
+    phase: 'destination-discover' | 'plan' | 'apply' | 'recover-inspect' | 'recover-apply',
     prompt: string,
   ): Promise<string> {
     return writeManualPrompt(runDirectory, phase, prompt);

@@ -8,6 +8,7 @@ import { consoleOutput, type Output } from './core/output.js';
 import { formatApprovalPrompt } from './core/presentation.js';
 import { AurousShell, createReadlineShellTerminal } from './core/shell.js';
 import { DynamicShellRenderer, type ShellTerminal } from './core/shell-renderer.js';
+import type { DestinationChoiceRequest } from './core/destination-resolver.js';
 
 export interface CliDependencies {
   cwd?: string;
@@ -30,7 +31,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
   program
     .name('aurous')
     .description(
-      'Plan and build productivity workspaces through your local AI agent and configured MCPs.',
+      'Plan and build productivity workspaces through your local AI agent and connected integrations.',
     )
     .version('0.1.0')
     .action(async () => {
@@ -91,6 +92,10 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .requiredOption('--context <paths...>', 'one or more explicit context paths')
     .requiredOption('--prompt <objective>', 'desired productivity workspace outcome')
     .option('--timeout <seconds>', 'override agent timeout in seconds', parsePositiveNumber)
+    .option('--destination-id <id>', 'advanced exact destination override')
+    .option('--destination-url <url>', 'advanced destination URL override')
+    .option('--destination-name <name>', 'friendly name for an advanced destination override')
+    .option('--verbose', 'show exact resolved destination IDs in the preview')
     .action(
       async (options: {
         agent?: string;
@@ -98,6 +103,10 @@ export function createCli(dependencies: CliDependencies = {}): Command {
         context: string[];
         prompt: string;
         timeout?: number;
+        destinationId?: string;
+        destinationUrl?: string;
+        destinationName?: string;
+        verbose?: boolean;
       }) => {
         const controller = cancellationController();
         await services.plan({
@@ -106,6 +115,11 @@ export function createCli(dependencies: CliDependencies = {}): Command {
           contextPaths: options.context,
           objective: options.prompt,
           ...(options.timeout ? { timeoutMs: options.timeout * 1_000 } : {}),
+          chooseDestination: chooseDestinationInTerminal,
+          ...(destinationOverride(options)
+            ? { destinationOverride: destinationOverride(options)! }
+            : {}),
+          verbose: Boolean(options.verbose),
           signal: controller.signal,
         });
       },
@@ -115,17 +129,19 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .command('apply <run-id>')
     .description('Preview and explicitly approve execution of a saved plan.')
     .option('--yes', 'explicitly confirm the preview for noninteractive use')
-    .action(async (runId: string, options: { yes?: boolean }) => {
+    .option('--verbose', 'show exact resolved destination IDs in the preview')
+    .action(async (runId: string, options: { yes?: boolean; verbose?: boolean }) => {
       const controller = cancellationController();
       await services.apply(runId, {
         confirmed: Boolean(options.yes),
         ...(!options.yes
           ? {
               confirm: () =>
-                confirm('Execute exactly this saved plan through the configured MCP?', 'apply'),
+                confirm('Apply exactly this saved plan to the connected integration?', 'apply'),
             }
           : {}),
         signal: controller.signal,
+        verbose: Boolean(options.verbose),
       });
     });
 
@@ -133,28 +149,48 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .command('linear-demo')
     .description('Plan, preview, approve, and execute the polished Linear demo in one command.')
     .option('--agent <agent>', 'agent: codex, claude, or mock')
-    .requiredOption('--team <team>', 'existing Linear team name, key, or UUID')
+    .option('--team <name>', 'optional friendly team-name hint')
+    .option('--destination-id <id>', 'advanced exact team override')
+    .option('--destination-url <url>', 'advanced team URL override')
+    .option('--destination-name <name>', 'friendly name for an advanced team override')
+    .option('--verbose', 'show exact resolved destination IDs in the preview')
     .requiredOption('--context <paths...>', 'structured Linear demo preset context')
     .option('--yes', 'explicitly confirm the printed preview for noninteractive use')
-    .action(async (options: { agent?: string; team: string; context: string[]; yes?: boolean }) => {
-      const controller = cancellationController();
-      const plan = await services.planLinearDemo({
-        ...(options.agent ? { agent: options.agent } : {}),
-        team: options.team,
-        contextPaths: options.context,
-      });
-      await services.apply(plan.runId, {
-        confirmed: Boolean(options.yes),
-        alreadyPreviewed: true,
-        ...(!options.yes
-          ? {
-              confirm: () =>
-                confirm('Execute exactly this Linear plan through the official MCP?', 'apply'),
-            }
-          : {}),
-        signal: controller.signal,
-      });
-    });
+    .action(
+      async (options: {
+        agent?: string;
+        team?: string;
+        context: string[];
+        yes?: boolean;
+        destinationId?: string;
+        destinationUrl?: string;
+        destinationName?: string;
+        verbose?: boolean;
+      }) => {
+        const controller = cancellationController();
+        const plan = await services.planLinearDemo({
+          ...(options.agent ? { agent: options.agent } : {}),
+          ...(options.team ? { team: options.team } : {}),
+          contextPaths: options.context,
+          chooseDestination: chooseDestinationInTerminal,
+          ...(destinationOverride(options)
+            ? { destinationOverride: destinationOverride(options)! }
+            : {}),
+          verbose: Boolean(options.verbose),
+        });
+        await services.apply(plan.runId, {
+          confirmed: Boolean(options.yes),
+          alreadyPreviewed: true,
+          ...(!options.yes
+            ? {
+                confirm: () =>
+                  confirm('Apply exactly this Linear plan to the connected integration?', 'apply'),
+              }
+            : {}),
+          signal: controller.signal,
+        });
+      },
+    );
 
   program
     .command('recover <run-id>')
@@ -217,4 +253,44 @@ function cancellationController(): AbortController {
   const controller = new AbortController();
   process.once('SIGINT', () => controller.abort());
   return controller;
+}
+
+async function chooseDestinationInTerminal(
+  request: DestinationChoiceRequest,
+): Promise<number | undefined> {
+  if (!input.isTTY || !output.isTTY) return undefined;
+  const reader = createInterface({ input, output });
+  try {
+    output.write(
+      `\n${request.question}\nAurous found ${request.candidates.length} available choices.\n\n`,
+    );
+    request.candidates.forEach((candidate, index) =>
+      output.write(`${index + 1}. ${candidate.name}\n`),
+    );
+    while (true) {
+      const answer = (
+        await reader.question(`\nChoose 1–${request.candidates.length}, or type cancel: `)
+      ).trim();
+      if (answer.toLowerCase() === 'cancel') return undefined;
+      const choice = Number(answer);
+      if (Number.isInteger(choice) && choice >= 1 && choice <= request.candidates.length)
+        return choice - 1;
+    }
+  } finally {
+    reader.close();
+  }
+}
+
+function destinationOverride(options: {
+  destinationId?: string;
+  destinationUrl?: string;
+  destinationName?: string;
+}): { id: string; name: string } | undefined {
+  if (options.destinationId && options.destinationUrl)
+    throw new Error('Choose either --destination-id or --destination-url, not both.');
+  const identity = options.destinationId ?? options.destinationUrl;
+  if (!identity && !options.destinationName) return undefined;
+  if (!identity || !options.destinationName)
+    throw new Error('--destination-name must accompany --destination-id or --destination-url.');
+  return { id: identity, name: options.destinationName };
 }

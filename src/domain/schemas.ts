@@ -141,8 +141,38 @@ export const AurousPlanSchema = PlanProposalSchema.extend({
   tool: ToolNameSchema,
   objective: z.string().min(1),
   contextSummary: ContextSummarySchema,
+}).superRefine((plan, context) => {
+  for (const action of plan.plannedActions) {
+    const values = [
+      action.target,
+      action.description,
+      ...action.properties.map((property) => property.value),
+    ];
+    if (values.some(isForbiddenDestinationPlaceholder)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['plannedActions', action.id],
+        message: 'Saved plans cannot contain unresolved destination placeholders.',
+      });
+    }
+  }
 });
 export type AurousPlan = z.infer<typeof AurousPlanSchema>;
+
+export function isForbiddenDestinationPlaceholder(value: string): boolean {
+  const normalized = value
+    .trim()
+    .toLocaleLowerCase()
+    .replace(/[\s_]+/g, '-');
+  return (
+    normalized === 'user-selected-parent' ||
+    normalized === 'unknown-team' ||
+    normalized === 'workspace-to-be-selected' ||
+    /^(user-selected|unknown-destination|destination-to-be-selected|select-a-|choose-a-)/.test(
+      normalized,
+    )
+  );
+}
 
 export interface CreatedObject {
   actionId: string;

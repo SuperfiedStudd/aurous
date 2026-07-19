@@ -3,7 +3,8 @@ import path from 'node:path';
 import { AurousCommandError, AurousError } from '../../core/errors.js';
 import { redactText } from '../../core/redact.js';
 
-export type AgentPhase = 'plan' | 'apply' | 'recover-inspect' | 'recover-apply';
+export type AgentPhase =
+  'destination-discover' | 'plan' | 'apply' | 'recover-inspect' | 'recover-apply';
 
 export async function writeManualPrompt(
   runDirectory: string,
@@ -65,9 +66,11 @@ export function commandFailure(
         'The local agent CLI returned a non-zero exit code.',
     nextAction: cancelled
       ? 'Review the run diagnostics, then create a new plan or retry apply when ready.'
-      : runId
-        ? `Run "aurous diagnose ${runId} --verbose", address the reported readiness issue, then retry.`
-        : 'Run "aurous doctor --verbose", address the reported readiness issue, then retry.',
+      : phase === 'destination-discover'
+        ? 'Check the integration connection, then repeat the original request.'
+        : runId
+          ? `Run "aurous diagnose ${runId} --verbose", address the reported readiness issue, then retry.`
+          : 'Run "aurous doctor --verbose", address the reported readiness issue, then retry.',
     severity: cancelled ? 'recoverable' : 'fatal',
     ...(runId ? { runId } : {}),
     command,
@@ -93,7 +96,9 @@ export function structuredOutputFailure(
     probableCause:
       'The agent process finished, but neither its response file nor captured stdout contained a response that matched the transport contract.',
     nextAction: runId
-      ? `Run "aurous diagnose ${runId} --verbose" and retry after reviewing the terminal error.`
+      ? phase === 'destination-discover'
+        ? 'Check the integration connection, then repeat the original request.'
+        : `Run "aurous diagnose ${runId} --verbose" and retry after reviewing the terminal error.`
       : 'Run "aurous doctor --verbose" and retry.',
     ...(runId ? { runId } : {}),
     command,

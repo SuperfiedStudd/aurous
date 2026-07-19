@@ -10,6 +10,7 @@ import type {
 import type { ProductivityAdapter } from '../productivity/types.js';
 import type { RecoveryInspection, RecoveryPlan } from '../../domain/recovery.js';
 import type { CreatedObject, PlanAction } from '../../domain/schemas.js';
+import type { DestinationDiscovery, ResolvedDestination } from '../../domain/destinations.js';
 
 export type Readiness = 'ready' | 'not-ready' | 'unknown';
 
@@ -37,6 +38,20 @@ export interface PlanGenerationInput {
   workspace: string;
   runDirectory: string;
   objective: string;
+  context: ContextBundle;
+  productivity: ProductivityAdapter;
+  destination: ResolvedDestination;
+  timeoutMs: number;
+  model?: string;
+  signal?: AbortSignal;
+}
+
+export interface DestinationDiscoveryInput {
+  discoveryId: string;
+  workspace: string;
+  runDirectory: string;
+  objective: string;
+  projectName: string;
   context: ContextBundle;
   productivity: ProductivityAdapter;
   timeoutMs: number;
@@ -79,6 +94,9 @@ export interface RecoveryActionExecutionInput {
 export interface AgentAdapter {
   readonly name: AgentName;
   diagnose(): Promise<AgentDiagnostic>;
+  discoverDestinations?(
+    input: DestinationDiscoveryInput,
+  ): Promise<InvocationRecord<DestinationDiscovery>>;
   generatePlan(input: PlanGenerationInput): Promise<InvocationRecord<PlanProposal>>;
   executePlan(input: PlanExecutionInput): Promise<InvocationRecord<ExecutionResult>>;
   inspectRecovery(input: RecoveryInspectionInput): Promise<InvocationRecord<RecoveryInspection>>;
@@ -87,7 +105,7 @@ export interface AgentAdapter {
   ): Promise<InvocationRecord<ExecutionResult>>;
   manualFallback(
     runDirectory: string,
-    phase: 'plan' | 'apply' | 'recover-inspect' | 'recover-apply',
+    phase: 'destination-discover' | 'plan' | 'apply' | 'recover-inspect' | 'recover-apply',
     prompt: string,
   ): Promise<string>;
 }

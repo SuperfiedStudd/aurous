@@ -5,10 +5,12 @@
 Aurous is an orchestration CLI, not a credential broker and not a productivity API client. It packages only user-approved local context, asks an existing local AI CLI to return a validated plan, persists that plan locally, and later asks the same agent to carry out the exact approved actions through its already-configured official MCP.
 
 ```text
-explicit paths -> guarded context ingestion -> context preview
+project root -> context pack -> guarded context ingestion
+                              -> read-only destination discovery
+                              -> exact destination resolution
                                                |
                                                v
-                                       local agent adapter
+                              no-tool local planning adapter
                                                |
                                        validated AurousPlan
                                                |
@@ -27,12 +29,15 @@ explicit paths -> guarded context ingestion -> context preview
 - `src/core/shell-renderer.ts` is the single terminal rendering boundary. It maps the shell state model to one ANSI-updated header/activity/composer surface, temporarily overlays help/status/approval, and commits meaningful workflow output to ordinary scrollback. It implements `Output`, so service progress updates the same live activity line instead of bypassing shell state.
 - `src/core/presentation.ts` renders the adaptive gold header, framed regions, shell metadata, composer, approval, progress, and no-color fallbacks.
 - `src/core/context.ts` is the path allowlist and context budget boundary.
+- `src/core/context-pack.ts` detects the project root and atomically persists the readable versioned `.aurous/context.json` project profile, preferences, integration destinations, exact IDs, provenance, and verification timestamps.
+- `src/core/destination-resolver.ts` applies the universal priority order for explicit friendly names, reverified saved choices, existing Aurous matches, unambiguous single choices, and numbered user selection.
+- `src/domain/destinations.ts` defines discovery candidates, exact inspected objects, resolved destinations, and the context-pack schema.
 - `src/domain/schemas.ts` and `src/domain/recovery.ts` define versioned Zod contracts for plans, results, runs, diagnostics, exact-ID inspection, recovery classifications, and checkpoints.
 - `src/domain/linear-demo.ts` validates the minimal structured demo context and deterministically maps it to an explicit Linear plan.
 - `src/core/services.ts` owns plan/apply/recovery state transitions and scope validation.
 - `src/core/run-store.ts` implements the `RunStore` interface with atomic, permission-restricted local JSON files. A future shared-state implementation can satisfy this interface without changing command orchestration.
 - `src/adapters/agents/` contains the shared `AgentAdapter` contract and Codex, Claude Code, and mock implementations.
-- `src/adapters/productivity/` keeps Notion- and Linear-native planning/execution guidance separate.
+- `src/adapters/productivity/` keeps Notion- and Linear-native planning/execution guidance separate. Every productivity adapter also declares its destination requirement, read-only discovery contract, friendly labels, ranking, exact plan property, unavailable guidance, and binding behavior; the shell contains no Notion/Linear destination logic.
 
 ## State model
 
@@ -53,13 +58,22 @@ logs/*.json                 redacted stdout/stderr captures
 
 `.aurous/` is gitignored. Writes use restrictive file modes and JSON files are replaced atomically.
 
+Project-level state is separate from run snapshots:
+
+```text
+.aurous/context.json                 versioned user-controlled context pack
+.aurous/discovery/<discovery-id>/    restricted working files for read-only discovery
+```
+
+The context pack contains project name/root/summary, selected preset, active integrations, friendly destination names, exact IDs, source provenance, workspace preferences, and verification timestamps. It never contains credentials, tokens, or MCP configuration.
+
 ## Plan and apply contracts
 
 The default command and `shell` command add a persistent orchestration layer around these contracts. The shell starts with the current project path visible, validates `/context` selections through the same guarded ingestion boundary, and routes explicit mentions of Linear or Notion without generating a second plan format. Natural requests call the existing plan method followed by the existing saved-plan apply method; `/plan` and `/apply` expose those phases separately. A plan always returns to the shell before further input, and no execution begins until the existing typed approval callback succeeds.
 
-Readline provides character editing and bounded duplicate-free history while normal terminal scrollback remains the output surface. The shell is not a full-screen TUI and has no alternate-screen state. ANSI-capable terminals erase and redraw only the active surface; redirected output, `NO_COLOR`, and limited terminals use append-only rendering. Prompt cancellation is separate from process exit, allowing a missing Linear team or approval to cancel without discarding the shell. Model selection is session-local: `auto` preserves the agent CLI default, while an explicit value is passed as one argument to the supported Codex or Claude Code model flag. Unsupported Claude Code model selection fails visibly before invocation.
+Readline provides character editing and bounded duplicate-free history while normal terminal scrollback remains the output surface. The shell is not a full-screen TUI and has no alternate-screen state. ANSI-capable terminals erase and redraw only the active surface; redirected output, `NO_COLOR`, and limited terminals use append-only rendering. Prompt cancellation is separate from process exit, allowing destination choice or approval to cancel without discarding the shell. The generic chooser displays names only; exact IDs remain in the saved context/plan and explicit context inspection views. Model selection is session-local: `auto` preserves the agent CLI default, while an explicit value is passed as one argument to the supported Codex or Claude Code model flag.
 
-Planning sends an embedded copy of selected context to the chosen local agent. It instructs the agent not to call tools or MCPs; Codex runs with a read-only sandbox and Claude Code disables tools when its inspected help advertises that flag. The returned proposal must pass both the Zod shape and semantic checks for sequential IDs, valid dependencies, and disclosed destructive actions.
+Before planning, the chosen agent performs a separately structured, integration-specific read-only discovery. The resolver re-verifies saved selections against current candidates and permits existing-object reuse only from exact IDs found in that inspection or a verified prior result. The productivity adapter binds the resolved destination ID to every action and injects exact deduplication references for matching inspected objects. Only then does plan generation receive the embedded context, verified destination snapshot, and a no-tool instruction. The returned proposal must pass shape and semantic checks for sequencing, dependencies, destructive disclosures, forbidden placeholders, and a consistent exact destination on every action.
 
 Codex transport schemas use the strict Structured Outputs subset: every object is closed, every declared key is required, and application-optional values are nullable. Boundary Zod schemas remove those nulls before persistence. Planned action configuration is transported as a strict list of unique string `{key, value}` entries; namespaced keys and JSON-encoded list values preserve Notion and Linear detail without an unsupported free-form object.
 

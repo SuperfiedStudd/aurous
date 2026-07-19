@@ -42,6 +42,7 @@ const plan: AurousPlan = {
       description: 'Create the approved project in the selected Linear team.',
       properties: [
         { key: 'linear.team', value: 'JasjyotSingh' },
+        { key: 'linear.teamId', value: 'team-exact-internal-id' },
         {
           key: 'linear.description',
           value:
@@ -56,7 +57,10 @@ const plan: AurousPlan = {
       objectType: 'issue',
       target: 'Record the launch walkthrough',
       description: 'Move the approved issue into the recording-ready state.',
-      properties: [{ key: 'linear.state', value: 'In Progress' }],
+      properties: [
+        { key: 'linear.teamId', value: 'team-exact-internal-id' },
+        { key: 'linear.state', value: 'In Progress' },
+      ],
       dependsOn: ['action-001'],
     },
   ],
@@ -104,6 +108,11 @@ const result: ExecutionResult = {
 };
 
 describe('CLI presentation', () => {
+  it('hides internal destination IDs normally and reveals them in verbose previews', () => {
+    expect(formatPlan(plan, { color: false })).not.toContain('team-exact-internal-id');
+    expect(formatPlan(plan, { color: false, verbose: true })).toContain('team-exact-internal-id');
+  });
+
   it.each([80, 120])('renders the complete experience within %i columns', (width) => {
     const rendered = [
       formatOpeningHeader(

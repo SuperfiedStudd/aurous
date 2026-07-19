@@ -1,6 +1,6 @@
 # Aurous
 
-Productivity, resolved. Aurous is a local-first CLI that turns explicitly approved project context and a plain-language objective into a previewable, auditable Notion or Linear workspace plan. After approval, it asks your already-authenticated Codex or Claude Code installation to execute that exact plan through its configured MCP.
+Productivity, resolved. Aurous is a local-first CLI that turns explicitly approved project context and a plain-language objective into a previewable, auditable Notion or Linear workspace plan. After approval, it asks your already-authenticated Codex or Claude Code installation to execute that exact plan through the connected integration.
 
 No AI, Notion, or Linear credentials are requested, copied, or stored by Aurous.
 
@@ -22,21 +22,23 @@ aurous
 npm run dev -- shell
 ```
 
-The shell keeps one live gold Aurous surface with the active agent/model, target, project, selected context, preset, team, state, and latest run. On compatible terminals it redraws that surface in place while committing only plans, previews, results, and real failures to normal scrollback. `NO_COLOR`, redirected output, and limited terminals use a clean append-only fallback. The readline composer supports normal terminal editing, duplicate-free Up/Down command history, Home/End navigation, context-aware Ctrl+C, and graceful EOF/exit behavior.
+The shell keeps one live gold Aurous surface with the active agent/model, target, project, selected context, friendly destination, preset, state, and latest run. On compatible terminals it redraws that surface in place while committing only plans, previews, results, and real failures to normal scrollback. `NO_COLOR`, redirected output, and limited terminals use a clean append-only fallback. The readline composer supports normal terminal editing, duplicate-free Up/Down command history, Home/End navigation, context-aware Ctrl+C, and graceful EOF/exit behavior.
 
 Start with configuration commands when needed, then ask naturally:
 
 ```text
 /agent codex
 /model gpt-5.6
-/target linear JasjyotSingh
+/target linear
 /context demo/linear-build-week.json
 Set up Linear for this project using my current context
 ```
 
-A natural-language request selects an explicitly named Notion or Linear target, generates and saves the existing Aurous plan, prints the complete preview, requires the same typed `apply` approval, executes through the existing adapter, records the result, and returns to the composer. The shell starts with the current project (`.`) visible as its context; use `/context` before planning to narrow or replace it.
+A natural-language request selects an explicitly named Notion or Linear target, inspects the connected integration read-only, resolves a safe destination, generates and saves the Aurous plan, prints the complete preview, requires typed `apply` approval, executes through the existing adapter, records the result, and returns to the composer. The shell starts with the detected project root (`.`) visible as its context; use `/context <paths...>` before planning to narrow or replace it.
 
-`/target linear <team>` selects the destination immediately. `/target linear` intentionally leaves the team missing; the next Linear request asks for it, reprompts on blank input, accepts `cancel`, and resumes the suspended request automatically after a valid name, key, or UUID is entered.
+When only one Notion location or Linear team is available, Aurous selects it automatically. When several are safe, the shell shows friendly numbered names, reprompts on blank input, accepts `cancel`, saves the selected exact identity internally, and resumes the suspended request. Normal onboarding never asks for a page URL, workspace ID, team key, or UUID.
+
+The versioned project context pack lives at `.aurous/context.json`. `/context show` explains the current project state, `/context destinations` shows saved destination IDs and provenance for inspection, and `/context forget notion|linear` removes a saved choice. Advanced users can stage a verified override with `/context override <integration> <id-or-url> <friendly-name>`.
 
 Available slash commands are `/help`, `/agent`, `/model`, `/target`, `/context`, `/preset`, `/plan`, `/apply`, `/runs`, `/status`, `/clear`, and `/exit`. Run `/help` inside the shell for accepted arguments.
 
@@ -74,7 +76,6 @@ The polished Linear path uses a small structured launch preset and runs context 
 ```bash
 npm run dev -- linear-demo \
   --agent codex \
-  --team JasjyotSingh \
   --context demo/linear-build-week.json
 ```
 
@@ -105,7 +106,7 @@ Recovery has no `--yes` bypass. It fetches only persisted external IDs, never se
 | `aurous runs`                          | List local runs and statuses                                           |
 | `aurous diagnose <run-id> [--verbose]` | Print a redacted, shareable diagnostic report                          |
 
-Use `aurous <command> --help` for all options. Runs and copied context are local to `.aurous/runs/`, which is gitignored.
+Use `aurous <command> --help` for all options. Runs and copied context are local to `.aurous/runs/`; portable project preferences and verified destinations are in `.aurous/context.json`. Neither location contains credentials or integration tokens.
 
 ## Development
 
@@ -121,7 +122,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and 
 ## Safety model
 
 - Context is opt-in per path; symlinks, secrets, `.git`, dependencies, build output, and large/binary files are skipped.
-- Planning cannot write to Notion or Linear and live agents receive an explicit no-tool planning instruction.
+- Destination discovery may call only read/list/search/get operations through the connected integration. Plan generation itself receives an explicit no-tool instruction.
+- Every new plan action is bound to one verified exact destination ID. Unresolved values such as `user-selected-parent` are rejected before preview and again before apply.
 - Applying uses the saved plan as an allowlist. The execution prompt forbids scope expansion.
 - Recovery reuses only exact persisted external IDs, has no automatic deletion, requires a fresh typed approval, and stops after the first partial or ambiguous action.
 - Logs and errors are redacted before persistence and include stable `AUR-*` codes.

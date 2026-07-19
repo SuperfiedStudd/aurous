@@ -12,6 +12,8 @@ import {
   tokenize,
 } from '../src/core/shell.js';
 import { DynamicShellRenderer, type ShellTerminal } from '../src/core/shell-renderer.js';
+import { MockAgentAdapter } from '../src/adapters/agents/mock.js';
+import type { DestinationDiscovery } from '../src/domain/destinations.js';
 
 const presetPath = new URL('../demo/linear-build-week.json', import.meta.url);
 const WAIT = Symbol('wait');
@@ -80,7 +82,7 @@ class ScriptedTerminal implements ShellTerminal {
 
 async function fixture(
   answers: Array<string | undefined | typeof WAIT>,
-  options: { ansi?: boolean; columns?: number } = {},
+  options: { ansi?: boolean; columns?: number; discovery?: DestinationDiscovery } = {},
 ) {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-shell-'));
   await writeFile(path.join(workspace, 'README.md'), '# Interactive demo\n');
@@ -89,11 +91,35 @@ async function fixture(
   await store.init({ defaultAgent: 'mock', defaultTool: 'notion' });
   const terminal = new ScriptedTerminal(answers, options.ansi ?? false, options.columns ?? 96);
   const renderer = new DynamicShellRenderer(terminal);
+  const mock = new MockAgentAdapter();
+  const discovery = options.discovery;
   const services = new AurousServices({
     workspace,
     store,
     output: renderer,
     progressIntervalMs: 1,
+    ...(discovery
+      ? {
+          agentFactory: () => ({
+            name: 'mock',
+            diagnose: () => mock.diagnose(),
+            discoverDestinations: () =>
+              Promise.resolve({
+                value: discovery,
+                command: ['mock-discovery'],
+                stdout: JSON.stringify(discovery),
+                stderr: '',
+                durationMs: 0,
+              }),
+            generatePlan: (input) => mock.generatePlan(input),
+            executePlan: (input) => mock.executePlan(input),
+            inspectRecovery: (input) => mock.inspectRecovery(input),
+            executeRecoveryAction: (input) => mock.executeRecoveryAction(input),
+            manualFallback: (directory, phase, prompt) =>
+              mock.manualFallback(directory, phase, prompt),
+          }),
+        }
+      : {}),
   });
   const shell = new AurousShell({ workspace, store, services, renderer });
   return { workspace, store, terminal, renderer, services, shell };
@@ -121,7 +147,6 @@ describe('dynamic interactive Aurous shell', () => {
       target: 'linear',
       contextPaths: ['linear.json'],
       preset: 'software-launch',
-      linearTeam: 'Demo Team',
     });
     expect(shell.snapshot().history).toEqual([
       '/exit',
@@ -139,18 +164,16 @@ describe('dynamic interactive Aurous shell', () => {
     expect(rendered).toContain('/agent · /model · /target');
     expect(rendered).toContain('✓ Agent Codex · model auto');
     expect(rendered).toContain('✓ Model gpt-5.6');
-    expect(rendered).toContain('✓ Target Linear · team Demo Team');
+    expect(rendered).toContain('✓ Target Linear');
     expect(rendered).toContain('✓ Context linear.json · 1 files');
     expect(rendered).not.toContain('Invalid target selection');
     expect(terminal.clearCount).toBe(1);
   });
 
-  it('reprompts for a blank Linear team, resumes the request, supports cancel, then completes', async () => {
+  it('automatically resolves one Linear team, supports cancel, then completes', async () => {
     const { shell, store, terminal } = await fixture([
       '/target linear',
       'Set up Linear for this project using my current context',
-      '',
-      'JasjyotSingh',
       'cancel',
       'Set up Linear for this project using my current context',
       'apply',
@@ -164,14 +187,14 @@ describe('dynamic interactive Aurous shell', () => {
     expect(runs.map((run) => run.status).sort()).toEqual(['planned', 'succeeded']);
     expect(shell.snapshot()).toMatchObject({
       target: 'linear',
-      linearTeam: 'JasjyotSingh',
+      linearTeam: 'Product team',
+      destinationName: 'Product team',
       state: 'Complete',
     });
-    expect(terminal.prompts.filter((prompt) => prompt.includes('team ›'))).toHaveLength(2);
+    expect(terminal.prompts.filter((prompt) => prompt.includes('destination ›'))).toHaveLength(0);
     expect(terminal.prompts.filter((prompt) => prompt.includes('approval ›'))).toHaveLength(2);
     const rendered = terminal.rendered();
-    expect(rendered).toContain('Enter a team name, key, or UUID; or type cancel.');
-    expect(rendered).toContain('✓ Linear team JasjyotSingh');
+    expect(rendered).toContain('✓ Using Product team');
     expect(rendered).toContain('Approval canceled. No external writes were attempted.');
     expect(rendered).toContain('Executing approved workspace actions · 0/11');
     expect(rendered).toContain('Approved actions completed · 11/11');
@@ -209,27 +232,140 @@ describe('dynamic interactive Aurous shell', () => {
     expect(rendered).toContain('\u001b[');
     expect(rendered).toContain('agent Codex');
     expect(rendered).toContain('target Linear');
-    expect(rendered).toContain('team JasjyotSingh');
+    expect(rendered).toContain('target Linear');
     expect(rendered).not.toContain('+- Request');
   });
 
-  it('cancels a pending team prompt without exiting or creating a run', async () => {
-    const { shell, store, terminal } = await fixture([
-      '/target linear',
-      'Set up Linear for this project',
-      WAIT,
-      '/exit',
-    ]);
+  it('reprompts on blank and cancels a pending friendly destination choice', async () => {
+    const discovery: DestinationDiscovery = {
+      integration: 'linear',
+      candidates: [
+        {
+          id: 'team-product',
+          name: 'Product',
+          kind: 'team',
+          description: '',
+          existingAurousMatch: false,
+        },
+        {
+          id: 'team-engineering',
+          name: 'Engineering',
+          kind: 'team',
+          description: '',
+          existingAurousMatch: false,
+        },
+      ],
+      existingObjects: [],
+      inspectedAt: '2026-07-19T12:00:00.000Z',
+      warnings: [],
+    };
+    const { shell, store, terminal } = await fixture(
+      ['/target linear', 'Set up Linear for this project', '', WAIT, '/exit'],
+      { discovery },
+    );
     const running = shell.run();
-    await vi.waitFor(() => expect(terminal.prompts.at(-1)).toContain('team ›'));
+    await vi.waitFor(() => expect(terminal.prompts.at(-1)).toContain('destination ›'));
 
     terminal.interruptNow();
     await running;
 
     expect(await store.listRuns()).toEqual([]);
     expect(terminal.cancelCount).toBe(1);
-    expect(terminal.rendered()).toContain('Team selection canceled.');
-    expect(terminal.rendered()).toContain('Pending Linear request canceled.');
+    expect(terminal.rendered()).toContain('Choose 1–2, or type cancel.');
+    expect(terminal.rendered()).toContain('Destination selection canceled.');
+  });
+
+  it('stores a numbered destination choice and resumes the suspended request automatically', async () => {
+    const discovery: DestinationDiscovery = {
+      integration: 'linear',
+      candidates: [
+        {
+          id: 'team-product',
+          name: 'Product',
+          kind: 'team',
+          description: '',
+          existingAurousMatch: false,
+        },
+        {
+          id: 'team-engineering',
+          name: 'Engineering',
+          kind: 'team',
+          description: '',
+          existingAurousMatch: false,
+        },
+      ],
+      existingObjects: [],
+      inspectedAt: '2026-07-19T12:00:00.000Z',
+      warnings: [],
+    };
+    const { shell, store, terminal } = await fixture(
+      ['/target linear', 'Set up Linear for this project', '', '2', 'cancel', '/exit'],
+      { discovery },
+    );
+
+    await shell.run();
+
+    const runs = await store.listRuns();
+    expect(runs).toHaveLength(1);
+    const plan = await store.loadPlan(runs[0]!.runId);
+    expect(
+      plan.plannedActions.every((action) =>
+        action.properties.some(
+          (property) => property.key === 'linear.teamId' && property.value === 'team-product',
+        ),
+      ),
+    ).toBe(true);
+    expect(terminal.rendered()).toContain('Choose 1–2, or type cancel.');
+    expect(terminal.rendered()).toContain('✓ Using Product');
+    expect(terminal.rendered()).not.toContain('team-product');
+    expect(terminal.rendered()).not.toContain('team-engineering');
+    expect(terminal.prompts.filter((prompt) => prompt.includes('destination ›'))).toHaveLength(2);
+    expect(terminal.prompts.filter((prompt) => prompt.includes('approval ›'))).toHaveLength(1);
+  });
+
+  it('shows and forgets project destination context without changing external systems', async () => {
+    const { shell, workspace, terminal } = await fixture([
+      '/target linear',
+      'Set up Linear for this project',
+      'cancel',
+      '/context show',
+      '/context destinations',
+      '/context forget linear',
+      '/exit',
+    ]);
+
+    await shell.run();
+
+    const context = JSON.parse(
+      await readFile(path.join(workspace, '.aurous', 'context.json'), 'utf8'),
+    ) as { destinations: unknown[] };
+    expect(context.destinations).toEqual([]);
+    expect(terminal.rendered()).toContain('Project Context');
+    expect(terminal.rendered()).toContain('Resolved Destinations');
+    expect(terminal.rendered()).toContain('exact ID');
+    expect(terminal.rendered()).toContain('Forgot the saved Linear destination.');
+  });
+
+  it('keeps a missing accessible Notion destination concise and recoverable', async () => {
+    const discovery: DestinationDiscovery = {
+      integration: 'notion',
+      candidates: [],
+      existingObjects: [],
+      inspectedAt: '2026-07-19T12:00:00.000Z',
+      warnings: [],
+    };
+    const { shell, store, terminal } = await fixture(['Set up Notion for this project', '/exit'], {
+      discovery,
+    });
+
+    await shell.run();
+
+    expect(await store.listRuns()).toEqual([]);
+    expect(terminal.rendered()).toContain(
+      'Aurous cannot access a suitable Notion page yet; share or create one page for Aurous, then try again.',
+    );
+    expect(terminal.rendered()).not.toContain('Fatal internal error');
+    expect(terminal.rendered()).not.toContain('MCP');
   });
 
   it('cancels composer input first and exits on a second Ctrl+C', async () => {

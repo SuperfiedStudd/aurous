@@ -7,11 +7,43 @@ import type {
 } from '../../domain/schemas.js';
 import type { ProductivityAdapter } from '../productivity/types.js';
 import type { RecoveryPlan } from '../../domain/recovery.js';
+import type { DestinationDiscoveryInput } from './types.js';
+
+export function buildDestinationDiscoveryPrompt(input: DestinationDiscoveryInput): string {
+  const documents = input.context.documents
+    .slice(0, 20)
+    .map(
+      (document) =>
+        `<document path=${JSON.stringify(document.relativePath)}>\n${document.content}\n</document>`,
+    )
+    .join('\n\n');
+  return `You are the read-only destination discovery engine for Aurous. Return only JSON matching the supplied schema.
+
+DISCOVERY SAFETY RULES:
+- Use only the configured official ${input.productivity.name} MCP.
+- Call only read, search, list, or get operations. Never create, update, move, archive, delete, comment, or configure anything.
+- Discover destinations a normal person can recognize. Preserve exact internal IDs, but never invent one.
+- Inspect relevant existing objects so Aurous can avoid duplicates. An object may be reported only after exact-ID inspection or an ID-bearing list result from this current discovery.
+- Set existingAurousMatch only when an inspected object matches the project or an existing Aurous workspace.
+- Return an empty candidate list when nothing accessible can safely contain the requested workspace.
+
+Integration-specific discovery contract:
+${input.productivity.destination.discoveryInstructions}
+
+Project: ${input.projectName}
+Objective: ${input.objective}
+Context summary: ${JSON.stringify(input.context.summary, null, 2)}
+Context documents:
+${documents || '(No readable project documents.)'}
+
+Set integration=${JSON.stringify(input.productivity.name)} and inspectedAt to the current ISO timestamp. Return candidates, existingObjects, and warnings.`;
+}
 
 export function buildPlanningPrompt(
   objective: string,
   context: ContextBundle,
   productivity: ProductivityAdapter,
+  destination: import('../../domain/destinations.js').ResolvedDestination,
 ): string {
   const documents = context.documents
     .map(
@@ -29,12 +61,19 @@ PLANNING SAFETY RULES:
 - Destructive actions must be empty unless the objective truly requires deletion or irreversible mutation.
 - Every workspace item must include parent; use null when it has no parent.
 - Every planned action's properties field must be an array of unique {"key":"...","value":"..."} entries. Use descriptive namespaced keys and JSON-encoded strings for lists when needed so no Notion or Linear detail is lost.
+- The exact destination below is already resolved. Never emit a placeholder, ask the user for an ID, or substitute another destination.
 
 User objective:
 ${objective}
 
 Tool-native design guidance:
 ${productivity.planningInstructions(objective)}
+
+Resolved destination contract:
+${productivity.destinationPlanningInstructions(destination)}
+
+Verified destination and existing-object snapshot:
+${JSON.stringify(destination, null, 2)}
 
 Approved context summary:
 ${JSON.stringify(context.summary, null, 2)}

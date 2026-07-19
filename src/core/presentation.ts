@@ -14,6 +14,7 @@ export interface RenderOptions {
   width?: number;
   color?: boolean;
   unicode?: boolean;
+  verbose?: boolean;
 }
 
 export interface RuntimeMetadata {
@@ -34,6 +35,7 @@ export interface ShellStatusMetadata {
   contextPaths: string[];
   preset?: string;
   linearTeam?: string;
+  destination?: string;
   lastRunId?: string;
 }
 
@@ -83,7 +85,7 @@ export function formatInteractiveHeader(
     ...mark,
     'AUROUS · PRODUCTIVITY, RESOLVED.',
     '',
-    `agent ${agentDisplayName(metadata.agent)}  ·  model ${metadata.model}  ·  target ${toolDisplayName(metadata.target)}${metadata.linearTeam ? `  ·  team ${metadata.linearTeam}` : ''}`,
+    `agent ${agentDisplayName(metadata.agent)}  ·  model ${metadata.model}  ·  target ${toolDisplayName(metadata.target)}${metadata.destination ? `  ·  destination ${metadata.destination}` : metadata.linearTeam ? `  ·  team ${metadata.linearTeam}` : ''}`,
     `project ${metadata.project}  ·  context ${metadata.contextPaths.join(', ')}`,
     `mode ${metadata.mode}  ·  state ${metadata.state ?? metadata.mode}${metadata.preset ? `  ·  preset ${metadata.preset}` : ''}`,
     ...(metadata.lastRunId ? [`run ${metadata.lastRunId}`] : []),
@@ -161,7 +163,8 @@ export function formatShellStatus(
       `project  ${metadata.project}`,
       `context  ${metadata.contextPaths.join(', ')}`,
       ...(metadata.preset ? [`preset   ${metadata.preset}`] : []),
-      ...(metadata.linearTeam ? [`team     ${metadata.linearTeam}`] : []),
+      ...(metadata.linearTeam && !metadata.destination ? [`team     ${metadata.linearTeam}`] : []),
+      ...(metadata.destination ? [`location ${metadata.destination}`] : []),
       ...(metadata.lastRunId ? [`run      ${metadata.lastRunId}`] : []),
     ],
     options,

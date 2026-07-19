@@ -11,7 +11,13 @@ import {
 } from './presentation.js';
 
 export type ShellPhase =
-  'Ready' | 'Selecting Team' | 'Planning' | 'Awaiting Approval' | 'Applying' | 'Complete' | 'Error';
+  | 'Ready'
+  | 'Selecting Destination'
+  | 'Planning'
+  | 'Awaiting Approval'
+  | 'Applying'
+  | 'Complete'
+  | 'Error';
 
 export interface ShellViewState extends ShellStatusMetadata {
   state: ShellPhase;

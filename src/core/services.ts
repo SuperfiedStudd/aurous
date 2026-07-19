@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { mkdir } from 'node:fs/promises';
 import {
   createAgentAdapter,
   type AgentAdapter,
@@ -19,6 +20,8 @@ import {
   type ExecutionBoundaryDiagnostic,
   type ExecutionResult,
   type RunRecord,
+  type ToolName,
+  isForbiddenDestinationPlaceholder,
 } from '../domain/schemas.js';
 import { buildLinearDemoPlan, parseLinearDemoContext } from '../domain/linear-demo.js';
 import {
@@ -47,6 +50,9 @@ import {
 import { createRunId } from './run-id.js';
 import { redactValue } from './redact.js';
 import type { RunStore } from './run-store.js';
+import { ContextPackStore, detectProjectRoot, destinationFor } from './context-pack.js';
+import { resolveDestination, type DestinationChooser } from './destination-resolver.js';
+import { DestinationDiscoverySchema, type ResolvedDestination } from '../domain/destinations.js';
 
 export interface ServiceDependencies {
   workspace: string;
@@ -66,6 +72,10 @@ export interface PlanOptions {
   embedded?: boolean;
   timeoutMs?: number;
   signal?: AbortSignal;
+  chooseDestination?: DestinationChooser;
+  destinationOverride?: { id: string; name: string };
+  preset?: string;
+  verbose?: boolean;
 }
 
 export interface ApplyOptions {
@@ -75,14 +85,20 @@ export interface ApplyOptions {
   model?: string;
   embedded?: boolean;
   signal?: AbortSignal;
+  verbose?: boolean;
 }
 
 export interface LinearDemoPlanOptions {
   agent?: string;
-  team: string;
+  team?: string;
   contextPaths: string[];
   model?: string;
   embedded?: boolean;
+  chooseDestination?: DestinationChooser;
+  destinationOverride?: { id: string; name: string };
+  preset?: string;
+  objective?: string;
+  verbose?: boolean;
 }
 
 export interface RecoverOptions {
@@ -198,6 +214,22 @@ export class AurousServices {
     if (!options.embedded)
       this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
 
+    const adapter = this.agentFactory(agentName);
+    const productivity = createProductivityAdapter(toolName);
+    const destination = await this.resolvePlanningDestination({
+      adapter,
+      productivity,
+      context,
+      objective,
+      timeoutMs: options.timeoutMs ?? config.timeoutMs,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.chooseDestination ? { choose: options.chooseDestination } : {}),
+      ...(options.destinationOverride ? { explicitOverride: options.destinationOverride } : {}),
+      ...(options.preset ? { preset: options.preset } : {}),
+    });
+    if (!destination) throw destinationCancelled();
+
     const record: RunRecord = {
       runId,
       createdAt: timestamp,
@@ -217,8 +249,6 @@ export class AurousServices {
     });
 
     try {
-      const adapter = this.agentFactory(agentName);
-      const productivity = createProductivityAdapter(toolName);
       const invocation = await this.withProgress('plan generation', options.signal, () =>
         adapter.generatePlan({
           runId,
@@ -227,6 +257,7 @@ export class AurousServices {
           objective,
           context,
           productivity,
+          destination,
           timeoutMs: options.timeoutMs ?? config.timeoutMs,
           ...(options.model ? { model: options.model } : {}),
           ...(options.signal ? { signal: options.signal } : {}),
@@ -238,8 +269,15 @@ export class AurousServices {
         invocation.stdout,
         invocation.stderr,
       );
-      const proposal = PlanProposalSchema.parse(invocation.value);
+      const proposal = PlanProposalSchema.parse(
+        productivity.bindDestination(PlanProposalSchema.parse(invocation.value), destination),
+      );
       validateProposalSemantics(proposal);
+      validateResolvedPlanDestination(
+        proposal,
+        productivity.destination.exactIdProperty,
+        destination.id,
+      );
       const plan = AurousPlanSchema.parse({
         ...proposal,
         schemaVersion: 1,
@@ -257,7 +295,7 @@ export class AurousServices {
         durationMs: invocation.durationMs,
         actionCount: plan.plannedActions.length,
       });
-      this.dependencies.output.log(`\n${formatPlan(plan)}`);
+      this.dependencies.output.log(`\n${formatPlan(plan, { verbose: Boolean(options.verbose) })}`);
       if (!options.embedded)
         this.dependencies.output.log(
           `\n${formatPlainNotice('Next', [
@@ -295,15 +333,6 @@ export class AurousServices {
   async planLinearDemo(options: LinearDemoPlanOptions): Promise<AurousPlan> {
     const config = await this.dependencies.store.loadConfig();
     const agentName = AgentNameSchema.parse(options.agent ?? config.defaultAgent);
-    const team = options.team.trim();
-    if (!team) {
-      throw new AurousError({
-        code: 'AUR-LINEAR-003',
-        summary: 'The Linear demo team cannot be empty.',
-        probableCause: 'The --team value was blank.',
-        nextAction: 'Pass an existing Linear team name, key, or UUID with --team.',
-      });
-    }
     const runId = createRunId(this.now());
     const timestamp = this.now().toISOString();
     if (!options.embedded)
@@ -321,12 +350,28 @@ export class AurousServices {
       paths: options.contextPaths,
     });
     const preset = parseLinearDemoContext(context);
+    const adapter = this.agentFactory(agentName);
+    const productivity = createProductivityAdapter('linear');
+    const destination = await this.resolvePlanningDestination({
+      adapter,
+      productivity,
+      context,
+      objective:
+        options.objective ??
+        `Set up Linear for ${preset.projectName}${options.team ? ` in ${options.team}` : ''}`,
+      timeoutMs: config.timeoutMs,
+      ...(options.model ? { model: options.model } : {}),
+      ...(options.chooseDestination ? { choose: options.chooseDestination } : {}),
+      ...(options.destinationOverride ? { explicitOverride: options.destinationOverride } : {}),
+      preset: options.preset ?? preset.preset,
+    });
+    if (!destination) throw destinationCancelled();
     if (!options.embedded) {
       this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
       this.dependencies.output.log(
         `\n${formatPlainNotice('Destination', [
           `Preset  ${preset.preset}`,
-          `Team    ${team}`,
+          `Team    ${destination.name}`,
           'Writes  none until explicit approval',
         ])}`,
       );
@@ -337,14 +382,19 @@ export class AurousServices {
       runId,
       createdAt: timestamp,
       agent: agentName,
-      team,
+      team: destination.name,
+      teamId: destination.id,
       context,
       preset,
     });
     const plan = AurousPlanSchema.parse(
-      await this.attachKnownLinearReferences(generatedPlan, team),
+      productivity.bindDestination(
+        await this.attachKnownLinearReferences(generatedPlan, destination.id),
+        destination,
+      ),
     );
     validateProposalSemantics(plan);
+    validateResolvedPlanDestination(plan, productivity.destination.exactIdProperty, destination.id);
     const record: RunRecord = {
       runId,
       createdAt: timestamp,
@@ -361,7 +411,8 @@ export class AurousServices {
     await this.dependencies.store.updateStatus(runId, 'planned');
     await this.event(runId, 'info', 'AUR-LINEAR-100', 'Deterministic Linear demo plan saved.', {
       preset: preset.preset,
-      team,
+      team: destination.name,
+      teamId: destination.id,
       actionCount: plan.plannedActions.length,
       milestoneCount: preset.milestones.length,
       issueCount: preset.knownTasks.length,
@@ -370,7 +421,7 @@ export class AurousServices {
       ).length,
     });
     this.progress('Hallmarking', 'Validated plan saved to local run history.');
-    this.dependencies.output.log(`\n${formatPlan(plan)}`);
+    this.dependencies.output.log(`\n${formatPlan(plan, { verbose: Boolean(options.verbose) })}`);
     return plan;
   }
 
@@ -435,12 +486,87 @@ export class AurousServices {
     };
   }
 
+  private async resolvePlanningDestination(input: {
+    adapter: AgentAdapter;
+    productivity: ReturnType<typeof createProductivityAdapter>;
+    context: Awaited<ReturnType<typeof ingestContext>>;
+    objective: string;
+    timeoutMs: number;
+    model?: string;
+    signal?: AbortSignal;
+    choose?: DestinationChooser;
+    explicitOverride?: { id: string; name: string };
+    preset?: string;
+  }): Promise<ResolvedDestination | undefined> {
+    const projectRoot = await detectProjectRoot(this.dependencies.workspace);
+    const contextStore = new ContextPackStore(projectRoot);
+    const pack = await contextStore.loadOrCreate(input.preset);
+    const discoveryId = createRunId(this.now()).replace(/^run-/, 'discovery-');
+    const runDirectory = path.join(projectRoot, '.aurous', 'discovery', discoveryId);
+    await mkdir(runDirectory, { recursive: true, mode: 0o700 });
+    this.progress(
+      'Assaying',
+      `Inspecting ${integrationDisplayName(input.productivity.name)} read-only.`,
+    );
+    const fallbackAdapter = input.adapter.name === 'mock' ? createAgentAdapter('mock') : undefined;
+    const discover =
+      input.adapter.discoverDestinations?.bind(input.adapter) ??
+      fallbackAdapter?.discoverDestinations?.bind(fallbackAdapter);
+    if (!discover) {
+      throw new AurousError({
+        code: 'AUR-DEST-005',
+        summary: 'The selected agent cannot discover integration destinations.',
+        probableCause: 'This agent adapter predates context-aware onboarding.',
+        nextAction: 'Choose Codex, Claude Code, or the built-in mock agent.',
+      });
+    }
+    const invocation = await discover({
+      discoveryId,
+      workspace: projectRoot,
+      runDirectory,
+      objective: input.objective,
+      projectName: pack.project.name,
+      context: input.context,
+      productivity: input.productivity,
+      timeoutMs: input.timeoutMs,
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
+    const discovery = DestinationDiscoverySchema.parse({
+      ...invocation.value,
+      inspectedAt: this.now().toISOString(),
+    });
+    if (discovery.integration !== input.productivity.name) {
+      throw new AurousError({
+        code: 'AUR-DEST-006',
+        summary: 'Destination discovery returned the wrong integration.',
+        probableCause: 'The read-only response crossed integration boundaries.',
+        nextAction: 'No writes occurred. Retry destination discovery.',
+      });
+    }
+    const saved = destinationFor(pack, input.productivity.name);
+    const destination = await resolveDestination({
+      adapter: input.productivity,
+      discovery,
+      objective: input.objective,
+      projectName: pack.project.name,
+      ...(saved ? { saved } : {}),
+      ...(input.choose ? { choose: input.choose } : {}),
+      ...(input.explicitOverride ? { explicitOverride: input.explicitOverride } : {}),
+    });
+    if (!destination) return undefined;
+    await contextStore.saveDestination(destination, input.preset);
+    this.dependencies.output.log(`✓ Using ${destination.name}`);
+    return destination;
+  }
+
   async apply(runId: string, options: ApplyOptions): Promise<ExecutionResult | undefined> {
     const [record, plan, config] = await Promise.all([
       this.dependencies.store.getRun(runId),
       this.dependencies.store.loadPlan(runId),
       this.dependencies.store.loadConfig(),
     ]);
+    validateExecutablePlanDestination(plan);
     if (record.status === 'applying') {
       throw new AurousError({
         code: 'AUR-APPLY-001',
@@ -470,7 +596,7 @@ export class AurousServices {
             model: options.model ?? modelDisplayName(plan.agent),
           }),
         );
-      this.dependencies.output.log(`\n${formatPlan(plan)}`);
+      this.dependencies.output.log(`\n${formatPlan(plan, { verbose: Boolean(options.verbose) })}`);
     }
     const confirmed = options.confirmed || (options.confirm ? await options.confirm() : false);
     if (!confirmed) {
@@ -1360,6 +1486,20 @@ function validateProposalSemantics(proposal: ReturnType<typeof PlanProposalSchem
         nextAction: 'Retry plan generation; no productivity tool was changed.',
       });
     }
+    const values = [
+      action.target,
+      action.description,
+      ...action.properties.map((property) => property.value),
+    ];
+    if (values.some(isForbiddenDestinationPlaceholder)) {
+      throw new AurousError({
+        code: 'AUR-PLAN-005',
+        summary: `The generated plan contains an unresolved destination in ${action.id}.`,
+        probableCause:
+          'Planning attempted to preserve a destination placeholder instead of an exact ID.',
+        nextAction: 'Run read-only destination discovery again; no external writes were attempted.',
+      });
+    }
   });
   if (proposal.destructiveActions.some((action) => !ids.has(action.actionId))) {
     throw new AurousError({
@@ -1369,6 +1509,61 @@ function validateProposalSemantics(proposal: ReturnType<typeof PlanProposalSchem
       nextAction: 'Retry plan generation; no productivity tool was changed.',
     });
   }
+}
+
+function validateResolvedPlanDestination(
+  proposal: ReturnType<typeof PlanProposalSchema.parse>,
+  propertyKey: string,
+  destinationId: string,
+): void {
+  if (
+    proposal.plannedActions.some(
+      (action) =>
+        action.properties.find((property) => property.key === propertyKey)?.value !== destinationId,
+    )
+  ) {
+    throw new AurousError({
+      code: 'AUR-PLAN-006',
+      summary: 'The generated plan is not fully bound to the verified destination.',
+      probableCause: `At least one action omitted the immutable ${propertyKey} exact ID.`,
+      nextAction: 'No writes were attempted. Regenerate the plan after destination inspection.',
+    });
+  }
+}
+
+function validateExecutablePlanDestination(plan: AurousPlan): void {
+  const adapter = createProductivityAdapter(plan.tool);
+  const key = adapter.destination.exactIdProperty;
+  const ids = plan.plannedActions.map(
+    (action) => action.properties.find((property) => property.key === key)?.value,
+  );
+  if (ids.some((id) => !id || isForbiddenDestinationPlaceholder(id)) || new Set(ids).size !== 1) {
+    throw new AurousError({
+      code: 'AUR-APPLY-004',
+      summary: 'This saved plan has no single verified destination.',
+      probableCause: `The immutable plan is missing a consistent exact ${key} value.`,
+      nextAction:
+        'Create a new plan; Aurous will discover and save the destination before preview.',
+      runId: plan.runId,
+      severity: 'recoverable',
+    });
+  }
+}
+
+function destinationCancelled(): AurousError {
+  return new AurousError({
+    code: 'AUR-DEST-004',
+    summary: 'Destination selection was canceled.',
+    probableCause: 'The user canceled before an immutable plan was created.',
+    nextAction: 'Describe the request again whenever you are ready.',
+    severity: 'recoverable',
+  });
+}
+
+function integrationDisplayName(tool: ToolName): string {
+  if (tool === 'notion') return 'Notion';
+  if (tool === 'linear') return 'Linear';
+  return 'Mock';
 }
 
 function validateExecutionScope(plan: AurousPlan, result: ExecutionResult): void {
@@ -1415,7 +1610,7 @@ function normalizeExecutionCompatibility(
 function linearPlanTeam(plan: AurousPlan): string | undefined {
   return plan.plannedActions
     .flatMap((action) => action.properties)
-    .find((property) => property.key === 'linear.team')?.value;
+    .find((property) => property.key === 'linear.teamId')?.value;
 }
 
 function validateInspectionScope(
