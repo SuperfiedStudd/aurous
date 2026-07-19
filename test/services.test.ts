@@ -134,7 +134,7 @@ describe('AurousServices mock flow', () => {
             'apply',
             ['mock', 'apply'],
             'partial stdout sk-abcdefghijklmnop',
-            'cancelled by test',
+            'embedded project prompt should stay hidden\nERROR: {"message":"schema rejected"}',
             false,
             true,
             12,
@@ -165,5 +165,12 @@ describe('AurousServices mock flow', () => {
     );
     expect(failedLog).toContain('[REDACTED_OPENAI_KEY]');
     expect(failedLog).not.toContain('sk-abcdefghijklmnop');
+
+    capture.lines.length = 0;
+    await services.diagnoseRun(plan.runId, true);
+    const diagnostic = capture.lines.join('\n');
+    expect(diagnostic).toContain('Agent terminal error (redacted)');
+    expect(diagnostic).toContain('schema rejected');
+    expect(diagnostic).not.toContain('embedded project prompt should stay hidden');
   });
 });

@@ -3,10 +3,15 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { AurousError } from '../../core/errors.js';
 import { redactText } from '../../core/redact.js';
-import { ExecutionResultSchema, PlanProposalSchema } from '../../domain/schemas.js';
+import { ExecutionResultResponseSchema, PlanProposalResponseSchema } from '../../domain/schemas.js';
 import { executionResultJsonSchema, planProposalJsonSchema } from '../../domain/json-schemas.js';
 import { buildExecutionPrompt, buildPlanningPrompt } from './prompts.js';
-import { commandFailure, parseJsonPayload, writeManualPrompt } from './helpers.js';
+import {
+  commandFailure,
+  parseJsonPayload,
+  structuredOutputFailure,
+  writeManualPrompt,
+} from './helpers.js';
 import type {
   AgentAdapter,
   AgentDiagnostic,
@@ -70,7 +75,7 @@ export class CodexAgentAdapter implements AgentAdapter {
     const prompt = buildPlanningPrompt(input.objective, input.context, input.productivity);
     await this.requireReady(input.runDirectory, 'plan', prompt);
     return this.invoke(input, 'plan', prompt, planProposalJsonSchema, (value) =>
-      PlanProposalSchema.parse(value),
+      PlanProposalResponseSchema.parse(value),
     );
   }
 
@@ -88,7 +93,7 @@ export class CodexAgentAdapter implements AgentAdapter {
       });
     }
     return this.invoke(input, 'apply', prompt, executionResultJsonSchema, (value) =>
-      ExecutionResultSchema.parse(value),
+      ExecutionResultResponseSchema.parse(value),
     );
   }
 
@@ -186,25 +191,47 @@ export class CodexAgentAdapter implements AgentAdapter {
         'plan' in input ? input.plan.runId : input.runId,
       );
     }
+    const runId = 'plan' in input ? input.plan.runId : input.runId;
     let output: string;
     try {
       output = await readFile(outputPath, 'utf8');
-    } catch (error) {
-      throw new AurousError({
-        code: 'AUR-AGENT-005',
-        summary: 'Codex completed without a saved structured response.',
-        probableCause: 'The installed Codex output contract differs from the advertised help.',
-        nextAction: 'Run "aurous doctor --verbose" and use the generated manual prompt.',
-        cause: error,
-      });
+    } catch {
+      if (result.stdout.trim()) output = result.stdout;
+      else {
+        const likelyTimedOut = result.timedOut || durationMs >= input.timeoutMs - 1_000;
+        throw commandFailure(
+          'Codex',
+          phase,
+          ['codex', ...args],
+          result.stdout,
+          result.stderr,
+          likelyTimedOut,
+          result.isCanceled,
+          durationMs,
+          runId,
+        );
+      }
     }
-    return {
-      value: parse(parseJsonPayload(output)),
-      command: ['codex', ...args],
-      stdout: result.stdout,
-      stderr: result.stderr,
-      durationMs,
-    };
+    try {
+      return {
+        value: parse(parseJsonPayload(output)),
+        command: ['codex', ...args],
+        stdout: result.stdout,
+        stderr: result.stderr,
+        durationMs,
+      };
+    } catch (error) {
+      throw structuredOutputFailure(
+        'Codex',
+        phase,
+        ['codex', ...args],
+        result.stdout,
+        result.stderr,
+        durationMs,
+        error,
+        runId,
+      );
+    }
   }
 }
 

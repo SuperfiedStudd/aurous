@@ -32,6 +32,7 @@ export interface RunStore {
   getRun(runId: string): Promise<RunRecord>;
   listRuns(): Promise<RunRecord[]>;
   readEvents(runId: string): Promise<DiagnosticEvent[]>;
+  readAgentFailureSummary(runId: string): Promise<string | undefined>;
   runDirectory(runId: string): string;
 }
 
@@ -199,6 +200,37 @@ export class LocalRunStore implements RunStore {
     }
   }
 
+  async readAgentFailureSummary(runId: string): Promise<string | undefined> {
+    const logsDirectory = path.join(this.runDirectory(runId), 'logs');
+    let entries;
+    try {
+      entries = await readdir(logsDirectory, { withFileTypes: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+    const logs = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && /agent-failed\.json$/.test(entry.name))
+        .map(async (entry) => {
+          try {
+            const value = JSON.parse(
+              await readFile(path.join(logsDirectory, entry.name), 'utf8'),
+            ) as unknown;
+            if (!isCommandLog(value)) return undefined;
+            return value;
+          } catch {
+            return undefined;
+          }
+        }),
+    );
+    const latest = logs
+      .filter((log): log is AgentCommandLog => log !== undefined)
+      .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+    if (!latest) return undefined;
+    return extractTerminalErrorSummary(latest.stderr || latest.stdout);
+  }
+
   private validateRunId(runId: string): string {
     if (!/^run-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$/.test(runId)) {
       throw new AurousError({
@@ -251,4 +283,31 @@ export class LocalRunStore implements RunStore {
       });
     }
   }
+}
+
+interface AgentCommandLog {
+  timestamp: string;
+  stdout: string;
+  stderr: string;
+}
+
+function isCommandLog(value: unknown): value is AgentCommandLog {
+  if (typeof value !== 'object' || value === null) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.timestamp === 'string' &&
+    typeof record.stdout === 'string' &&
+    typeof record.stderr === 'string'
+  );
+}
+
+export function extractTerminalErrorSummary(output: string, maxCharacters = 4_000): string {
+  const redacted = redactText(output.trim());
+  const errorMarker = redacted.lastIndexOf('\nERROR:');
+  const candidate = errorMarker >= 0 ? redacted.slice(errorMarker + 1) : tailLines(redacted, 24);
+  return candidate.length <= maxCharacters ? candidate : candidate.slice(-maxCharacters);
+}
+
+function tailLines(value: string, count: number): string {
+  return value.split('\n').slice(-count).join('\n');
 }

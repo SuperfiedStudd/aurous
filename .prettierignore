@@ -1,4 +1,6 @@
 dist
 coverage
 .aurous
+.claude
+.mcp.json
 package-lock.json

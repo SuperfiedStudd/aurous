@@ -7,6 +7,8 @@ import { AurousError } from './errors.js';
 const excludedDirectories = new Set([
   '.git',
   '.aurous',
+  '.claude',
+  '.codex',
   'node_modules',
   'dist',
   'build',
@@ -16,6 +18,15 @@ const excludedDirectories = new Set([
   'out',
   'target',
   'vendor',
+]);
+const excludedFileNames = new Set([
+  '.mcp.json',
+  'package-lock.json',
+  'npm-shrinkwrap.json',
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  'bun.lock',
+  'bun.lockb',
 ]);
 const excludedExtensions = new Set([
   '.env',
@@ -237,6 +248,7 @@ function classifyFile(
   const extension = path.extname(name).toLowerCase();
   const segments = relativePath.toLowerCase().split(path.sep);
   if (
+    excludedFileNames.has(name) ||
     name === '.env' ||
     name.startsWith('.env.') ||
     excludedExtensions.has(extension) ||

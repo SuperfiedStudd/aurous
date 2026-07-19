@@ -75,6 +75,33 @@ export function commandFailure(
   });
 }
 
+export function structuredOutputFailure(
+  agent: string,
+  phase: 'plan' | 'apply',
+  command: string[],
+  stdout: string,
+  stderr: string,
+  durationMs: number,
+  cause: unknown,
+  runId?: string,
+): AurousCommandError {
+  return new AurousCommandError({
+    code: 'AUR-AGENT-005',
+    summary: `${agent} returned an invalid or unavailable structured response during ${phase}.`,
+    probableCause:
+      'The agent process finished, but neither its response file nor captured stdout contained a response that matched the transport contract.',
+    nextAction: runId
+      ? `Run "aurous diagnose ${runId} --verbose" and retry after reviewing the terminal error.`
+      : 'Run "aurous doctor --verbose" and retry.',
+    ...(runId ? { runId } : {}),
+    command,
+    stdout,
+    stderr,
+    durationMs,
+    cause,
+  });
+}
+
 function invalidOutput(summary: string, cause?: unknown): AurousError {
   return new AurousError({
     code: 'AUR-AGENT-005',

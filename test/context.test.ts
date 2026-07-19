@@ -9,9 +9,13 @@ describe('ingestContext', () => {
     const parent = await mkdtemp(path.join(os.tmpdir(), 'aurous-context-'));
     const project = path.join(parent, 'project');
     await mkdir(path.join(project, 'src'), { recursive: true });
+    await mkdir(path.join(project, '.claude'), { recursive: true });
     await mkdir(path.join(project, 'node_modules', 'dependency'), { recursive: true });
     await writeFile(path.join(project, 'README.md'), '# Safe project\n');
     await writeFile(path.join(project, 'package.json'), '{"name":"safe"}\n');
+    await writeFile(path.join(project, 'package-lock.json'), '{"private":"do-not-read"}\n');
+    await writeFile(path.join(project, '.mcp.json'), '{"token":"do-not-read"}\n');
+    await writeFile(path.join(project, '.claude', 'settings.local.json'), 'do-not-read\n');
     await writeFile(path.join(project, 'src', 'index.ts'), 'export const safe = true;\n');
     await writeFile(path.join(project, '.env'), 'API_KEY=do-not-read\n');
     await writeFile(path.join(project, 'private.pem'), 'do-not-read\n');
@@ -35,6 +39,8 @@ describe('ingestContext', () => {
     );
     expect(bundle.summary.skipped.join('\n')).toContain('.env (not selected)');
     expect(bundle.summary.skipped.join('\n')).toContain('node_modules/ (excluded directory)');
+    expect(bundle.summary.skipped.join('\n')).toContain('.claude/ (excluded directory)');
+    expect(bundle.summary.skipped.join('\n')).toContain('package-lock.json (not selected)');
     expect(bundle.summary.skipped.join('\n')).toContain('outside-link.md (symbolic link)');
   });
 
