@@ -2,14 +2,22 @@ import { execa } from 'execa';
 import { AurousError } from '../../core/errors.js';
 import { redactText } from '../../core/redact.js';
 import { ExecutionResultResponseSchema, PlanProposalResponseSchema } from '../../domain/schemas.js';
-import { buildExecutionPrompt, buildPlanningPrompt } from './prompts.js';
-import { commandFailure, parseJsonPayload, writeManualPrompt } from './helpers.js';
+import { RecoveryInspectionSchema } from '../../domain/recovery.js';
+import {
+  buildExecutionPrompt,
+  buildPlanningPrompt,
+  buildRecoveryActionPrompt,
+  buildRecoveryInspectionPrompt,
+} from './prompts.js';
+import { commandFailure, parseJsonPayload, writeManualPrompt, type AgentPhase } from './helpers.js';
 import type {
   AgentAdapter,
   AgentDiagnostic,
   InvocationRecord,
   PlanExecutionInput,
   PlanGenerationInput,
+  RecoveryActionExecutionInput,
+  RecoveryInspectionInput,
 } from './types.js';
 
 export class ClaudeAgentAdapter implements AgentAdapter {
@@ -87,13 +95,66 @@ export class ClaudeAgentAdapter implements AgentAdapter {
     );
   }
 
-  manualFallback(runDirectory: string, phase: 'plan' | 'apply', prompt: string): Promise<string> {
+  async inspectRecovery(input: RecoveryInspectionInput) {
+    const prompt = buildRecoveryInspectionPrompt(input.originalPlan, input.originalResult);
+    await this.requireMcpReady(
+      input.runDirectory,
+      'recover-inspect',
+      prompt,
+      input.originalPlan.tool,
+      input.recoveryRunId,
+    );
+    return this.invoke(input, 'recover-inspect', prompt, (value) =>
+      RecoveryInspectionSchema.parse(value),
+    );
+  }
+
+  async executeRecoveryAction(input: RecoveryActionExecutionInput) {
+    const prompt = buildRecoveryActionPrompt(
+      input.recoveryPlan,
+      input.action,
+      input.knownObjects,
+      input.productivity,
+    );
+    await this.requireMcpReady(
+      input.runDirectory,
+      'recover-apply',
+      prompt,
+      input.recoveryPlan.tool,
+      input.recoveryPlan.recoveryRunId,
+    );
+    return this.invoke(input, 'recover-apply', prompt, (value) =>
+      ExecutionResultResponseSchema.parse(value),
+    );
+  }
+
+  manualFallback(runDirectory: string, phase: AgentPhase, prompt: string): Promise<string> {
     return writeManualPrompt(runDirectory, phase, prompt);
+  }
+
+  private async requireMcpReady(
+    runDirectory: string,
+    phase: AgentPhase,
+    prompt: string,
+    tool: 'notion' | 'linear' | 'mock',
+    runId: string,
+  ): Promise<void> {
+    const diagnostic = await this.requireReady(runDirectory, phase, prompt);
+    if (tool !== 'mock' && diagnostic.mcp[tool].status !== 'ready') {
+      const fallback = await this.manualFallback(runDirectory, phase, prompt);
+      throw new AurousError({
+        code: 'AUR-MCP-001',
+        summary: `${tool} MCP is not ready in Claude Code.`,
+        probableCause: diagnostic.mcp[tool].detail,
+        nextAction: `Configure the official ${tool} MCP in Claude Code, then retry. Manual prompt: ${fallback}`,
+        runId,
+      });
+    }
   }
 
   private async requireReady(
     runDirectory: string,
-    phase: 'plan' | 'apply',
+    phase: AgentPhase,
     prompt: string,
   ): Promise<AgentDiagnostic> {
     const diagnostic = await this.diagnose();
@@ -112,8 +173,12 @@ export class ClaudeAgentAdapter implements AgentAdapter {
   }
 
   private async invoke<T>(
-    input: PlanGenerationInput | PlanExecutionInput,
-    phase: 'plan' | 'apply',
+    input:
+      | PlanGenerationInput
+      | PlanExecutionInput
+      | RecoveryInspectionInput
+      | RecoveryActionExecutionInput,
+    phase: AgentPhase,
     prompt: string,
     parse: (value: unknown) => T,
   ): Promise<InvocationRecord<T>> {
@@ -142,7 +207,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
           false,
           true,
           durationMs,
-          'plan' in input ? input.plan.runId : input.runId,
+          invocationRunId(input),
         );
       }
       throw error;
@@ -158,7 +223,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
         result.timedOut,
         result.isCanceled,
         durationMs,
-        'plan' in input ? input.plan.runId : input.runId,
+        invocationRunId(input),
       );
     }
     return {
@@ -169,6 +234,19 @@ export class ClaudeAgentAdapter implements AgentAdapter {
       durationMs,
     };
   }
+}
+
+function invocationRunId(
+  input:
+    | PlanGenerationInput
+    | PlanExecutionInput
+    | RecoveryInspectionInput
+    | RecoveryActionExecutionInput,
+): string {
+  if ('runId' in input) return input.runId;
+  if ('plan' in input) return input.plan.runId;
+  if ('recoveryRunId' in input) return input.recoveryRunId;
+  return input.recoveryPlan.recoveryRunId;
 }
 
 function claudeMcpReadiness(
