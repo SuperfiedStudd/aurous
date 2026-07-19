@@ -128,6 +128,62 @@ describe('AurousServices recovery flow', () => {
     expect((await store.getRun(recovery.recoveryRunId)).status).toBe('succeeded');
   });
 
+  it('fails closed with a redacted semantic diff before any recovery write on material drift', async () => {
+    const { workspace, store, capture, originalRunId } = await fixture();
+    const mock = new MockAgentAdapter();
+    let inspections = 0;
+    let executionCalls = 0;
+    const adapter = agentWith({
+      inspectRecovery: async (input) => {
+        const inspection = await mock.inspectRecovery(input);
+        inspections += 1;
+        if (inspections === 2) {
+          return {
+            ...inspection,
+            value: {
+              ...inspection.value,
+              objects: inspection.value.objects.map((object) => ({
+                ...object,
+                title: `${object.title} renamed`,
+              })),
+            },
+          };
+        }
+        return inspection;
+      },
+      executeRecoveryAction: async (input) => {
+        executionCalls += 1;
+        return mock.executeRecoveryAction(input);
+      },
+    });
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => adapter,
+    });
+    const recovery = await services.recover(originalRunId);
+
+    await expect(
+      services.applyRecovery(recovery.recoveryRunId, { confirm: () => Promise.resolve(true) }),
+    ).rejects.toMatchObject({ code: 'AUR-RECOVERY-011' });
+
+    expect(executionCalls).toBe(0);
+    expect((await store.getRun(recovery.recoveryRunId)).status).toBe('failed');
+    expect((await store.loadResult(recovery.recoveryRunId))?.status).toBe('failed');
+    const event = (await store.readEvents(recovery.recoveryRunId)).find(
+      (candidate) => candidate.code === 'AUR-RECOVERY-011',
+    );
+    expect(event?.metadata.originalRunId).toBe(originalRunId);
+    const semanticDiff = event?.metadata.semanticDiff;
+    if (!Array.isArray(semanticDiff)) throw new Error('Expected a machine-readable semantic diff.');
+    expect(semanticDiff).toContainEqual({
+      path: '$.objects[0].title',
+      expected: 'Project Command Center',
+      actual: 'Project Command Center renamed',
+    });
+  });
+
   it('stops after a partial recovery action and executes no subsequent actions', async () => {
     const { workspace, store, capture, originalRunId } = await fixture();
     let executionCalls = 0;

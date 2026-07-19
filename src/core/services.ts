@@ -21,6 +21,8 @@ import {
 import {
   RecoveryInspectionSchema,
   buildRecoveryPlan,
+  diffRecoverySemanticInspections,
+  recoverySemanticFingerprint,
   type RecoveryPlan,
 } from '../domain/recovery.js';
 import { asAurousError, AurousCommandError, AurousError } from './errors.js';
@@ -34,6 +36,7 @@ import {
   type Output,
 } from './output.js';
 import { createRunId } from './run-id.js';
+import { redactValue } from './redact.js';
 import type { RunStore } from './run-store.js';
 
 export interface ServiceDependencies {
@@ -648,6 +651,46 @@ export class AurousServices {
     );
     const freshInspection = RecoveryInspectionSchema.parse(verificationInvocation.value);
     validateInspectionScope(originalResult, freshInspection.objects);
+    if (
+      recoverySemanticFingerprint(freshInspection) !==
+      recoverySemanticFingerprint(recoveryPlan.inspection)
+    ) {
+      const error = new AurousError({
+        code: 'AUR-RECOVERY-011',
+        summary: 'Live Notion state or recovery capabilities changed after plan review.',
+        probableCause: 'The mandatory pre-write verification no longer matches the approved plan.',
+        nextAction: `Generate and review a fresh recovery plan from ${recoveryPlan.originalRunId}. No recovery writes were attempted.`,
+        runId: recoveryRunId,
+      });
+      const semanticDiff = redactValue(
+        diffRecoverySemanticInspections(recoveryPlan.inspection, freshInspection),
+      );
+      const timestamp = this.now().toISOString();
+      await this.dependencies.store.saveResult(recoveryRunId, {
+        status: 'failed',
+        summary: error.message,
+        createdObjects: [],
+        completedActionIds: [],
+        warnings: [],
+        failures: [
+          {
+            code: error.code,
+            summary: error.message,
+            probableCause: error.probableCause,
+            nextAction: error.nextAction,
+            severity: error.severity,
+          },
+        ],
+        startedAt: timestamp,
+        finishedAt: timestamp,
+      });
+      await this.dependencies.store.updateStatus(recoveryRunId, 'failed');
+      await this.event(recoveryRunId, 'error', error.code, error.message, {
+        originalRunId: recoveryPlan.originalRunId,
+        semanticDiff,
+      });
+      throw error;
+    }
     const freshPlan = buildRecoveryPlan({
       recoveryRunId,
       originalPlan,
@@ -655,15 +698,6 @@ export class AurousServices {
       inspection: freshInspection,
       createdAt: recoveryPlan.createdAt,
     });
-    if (recoverySafetyFingerprint(freshPlan) !== recoverySafetyFingerprint(recoveryPlan)) {
-      throw new AurousError({
-        code: 'AUR-RECOVERY-011',
-        summary: 'Live Notion state or recovery capabilities changed after plan review.',
-        probableCause: 'The mandatory pre-write verification no longer matches the approved plan.',
-        nextAction: `Generate and review a fresh recovery plan from ${recoveryPlan.originalRunId}. No recovery writes were attempted.`,
-        runId: recoveryRunId,
-      });
-    }
     for (const object of freshPlan.verifiedObjects) {
       if (!object.externalId) continue;
       await this.dependencies.store.appendRecoveryCheckpoint(recoveryRunId, {
@@ -1026,39 +1060,6 @@ function validateInspectionScope(
       nextAction: 'No writes were attempted. Retry the read-only recovery inspection.',
     });
   }
-}
-
-function recoverySafetyFingerprint(plan: RecoveryPlan): string {
-  return JSON.stringify({
-    objects: plan.inspection.objects
-      .map((object) => ({
-        externalId: object.externalId,
-        actionId: object.actionId,
-        found: object.found,
-        objectType: object.objectType,
-        title: object.title,
-        parentId: object.parentId,
-        recordCount: object.recordCount,
-        properties: object.properties
-          .map((property) => ({
-            ...property,
-            options: [...property.options].sort(),
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name)),
-        views: [...object.views].sort((a, b) => a.name.localeCompare(b.name)),
-      }))
-      .sort((a, b) => a.externalId.localeCompare(b.externalId)),
-    capabilities: {
-      customStatusOptions: plan.inspection.customStatusOptions.supported,
-      customSelectOptions: plan.inspection.customSelectOptions.supported,
-      updateViewFilters: plan.inspection.updateViewFilters.supported,
-    },
-    classifications: plan.classifications,
-    compatibilityDecisions: plan.compatibilityDecisions,
-    verifiedObjects: plan.verifiedObjects,
-    plannedActions: plan.plannedActions,
-    isExecutable: plan.isExecutable,
-  });
 }
 
 function validateRecoveryActionResult(

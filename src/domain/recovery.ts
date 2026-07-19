@@ -59,6 +59,147 @@ export const RecoveryInspectionSchema = z.object({
 });
 export type RecoveryInspection = z.infer<typeof RecoveryInspectionSchema>;
 
+/**
+ * Stable, safety-relevant representation of a read-only recovery inspection.
+ *
+ * Agent prose is intentionally excluded: it can vary between identical MCP
+ * observations. This snapshot is used only to guard the transition from a
+ * reviewed recovery plan to external writes.
+ */
+export interface RecoverySemanticInspection {
+  objects: Array<{
+    actionId: string;
+    externalId: string;
+    found: boolean;
+    objectType: string | null;
+    title: string | null;
+    parentId: string | null;
+    properties: Array<{ name: string; type: string; options: string[] }>;
+    views: Array<{ name: string; type: string; filterState: string | null }>;
+  }>;
+  capabilities: {
+    customStatusOptions: boolean;
+    customSelectOptions: boolean;
+    updateViewFilters: boolean;
+  };
+}
+
+export interface RecoverySemanticDifference {
+  path: string;
+  expected: unknown;
+  actual: unknown;
+}
+
+export function recoverySemanticInspection(
+  inspection: RecoveryInspection,
+): RecoverySemanticInspection {
+  return {
+    objects: inspection.objects
+      .map((object) => ({
+        actionId: object.actionId,
+        externalId: object.externalId,
+        found: object.found,
+        objectType: object.objectType ?? null,
+        title: object.title ?? null,
+        parentId: object.parentId ?? null,
+        properties: normalizeInspectionProperties(object.objectType, object.properties),
+        views: object.views
+          .map((view) => ({
+            name: view.name,
+            type: view.type,
+            filterState: normalizeFilterState(view.filterSummary),
+          }))
+          .sort(compareJson),
+      }))
+      .sort(compareJson),
+    capabilities: {
+      customStatusOptions: inspection.customStatusOptions.supported,
+      customSelectOptions: inspection.customSelectOptions.supported,
+      updateViewFilters: inspection.updateViewFilters.supported,
+    },
+  };
+}
+
+export function recoverySemanticFingerprint(inspection: RecoveryInspection): string {
+  return JSON.stringify(recoverySemanticInspection(inspection));
+}
+
+export function diffRecoverySemanticInspections(
+  expected: RecoveryInspection,
+  actual: RecoveryInspection,
+): RecoverySemanticDifference[] {
+  const differences: RecoverySemanticDifference[] = [];
+  collectSemanticDifferences(
+    recoverySemanticInspection(expected),
+    recoverySemanticInspection(actual),
+    '$',
+    differences,
+  );
+  return differences;
+}
+
+function normalizeInspectionProperties(
+  objectType: string | null | undefined,
+  properties: z.infer<typeof InspectedPropertySchema>[],
+): Array<{ name: string; type: string; options: string[] }> {
+  const meaningfulProperties =
+    objectType === 'page'
+      ? properties.filter(
+          (property) => !(property.type === 'title' && property.options.length === 0),
+        )
+      : properties;
+  return meaningfulProperties
+    .map((property) => ({
+      name: property.name,
+      type: property.type,
+      options: [...property.options].sort((a, b) => a.localeCompare(b)),
+    }))
+    .sort(compareJson);
+}
+
+function normalizeFilterState(summary: string | null | undefined): string | null {
+  if (!summary) return null;
+  const normalized = summary.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+  // Empty filters have several MCP/agent renderings but are semantically alike.
+  if (
+    /(?:no active filters|empty (?:and )?filter|0 filters|no filters|clear filter)/.test(normalized)
+  ) {
+    return null;
+  }
+  // Free-form statements that say the filter was not exposed are not reliable
+  // filter state and must not block a previously reviewed recovery.
+  if (/(?:not exposed|not available|unavailable|unknown)/.test(normalized)) return null;
+  return normalized;
+}
+
+function compareJson(left: unknown, right: unknown): number {
+  return JSON.stringify(left).localeCompare(JSON.stringify(right));
+}
+
+function collectSemanticDifferences(
+  expected: unknown,
+  actual: unknown,
+  path: string,
+  differences: RecoverySemanticDifference[],
+): void {
+  if (JSON.stringify(expected) === JSON.stringify(actual)) return;
+  if (Array.isArray(expected) && Array.isArray(actual)) {
+    const length = Math.max(expected.length, actual.length);
+    for (let index = 0; index < length; index += 1) {
+      collectSemanticDifferences(expected[index], actual[index], `${path}[${index}]`, differences);
+    }
+    return;
+  }
+  if (isRecord(expected) && isRecord(actual)) {
+    const keys = [...new Set([...Object.keys(expected), ...Object.keys(actual)])].sort();
+    for (const key of keys) {
+      collectSemanticDifferences(expected[key], actual[key], `${path}.${key}`, differences);
+    }
+    return;
+  }
+  differences.push({ path, expected: expected ?? null, actual: actual ?? null });
+}
+
 export const RecoveryClassificationSchema = z.object({
   actionId: z.string(),
   status: RecoveryActionStatusSchema,
