@@ -110,7 +110,8 @@ RECOVERY SAFETY RULES:
 - If notion.recovery.mode is update-existing, do not create any page or database for that action.
 - For a create action, create only the approved target. If the tool result does not expose its ID and URL, report a partial failure instead of claiming completion.
 - Preserve the Status-to-Select compatibility decision exactly. Do not fall back to Notion Status or default options.
-- Report created or verified external objects immediately in createdObjects using this action ID.
+- For a create action, report newly created external objects in createdObjects using this action ID.
+- For an update action, return the verified existing object in createdObjects only as exact-ID checkpoint evidence; Aurous reports it as updated, never newly created.
 - completedActionIds may contain only this action ID.
 - Do not execute dependent or subsequent actions.
 - Every failure code must match AUR-<SINGLE-UPPERCASE-CATEGORY>-<3 DIGITS> exactly. Use AUR-AGENT-005 when the response itself violates this contract; never emit values such as AUR-RECOVERY-CANCELLED.

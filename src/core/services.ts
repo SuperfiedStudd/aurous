@@ -805,7 +805,14 @@ export class AurousServices {
         }
         const actionResult = normalized.result;
         validateRecoveryActionResult(recoveryPlan, action, actionResult);
-        createdObjects = mergeCreatedObjects(createdObjects, actionResult.createdObjects);
+        const checkpointObjects = recoveryActionCheckpointObjects(
+          action,
+          actionResult,
+          boundaryDiagnostics.length > 0,
+        );
+        const newlyCreatedObjects =
+          action.operation === 'create' ? actionResult.createdObjects : [];
+        createdObjects = mergeCreatedObjects(createdObjects, newlyCreatedObjects);
         completedActionIds = [
           ...new Set([...completedActionIds, ...actionResult.completedActionIds]),
         ];
@@ -819,7 +826,7 @@ export class AurousServices {
             : []),
         ];
         failures = [...failures, ...actionResult.failures];
-        for (const object of actionResult.createdObjects) {
+        for (const object of checkpointObjects) {
           if (!object.externalId) continue;
           await this.dependencies.store.appendRecoveryCheckpoint(recoveryRunId, {
             timestamp: this.now().toISOString(),
@@ -834,12 +841,19 @@ export class AurousServices {
           });
         }
         invocationInProgress = false;
+        const ambiguousWrite =
+          boundaryDiagnostics.length > 0 ||
+          (actionResult.status !== 'succeeded' && checkpointObjects.length > 0);
         const intermediate: ExecutionResult = {
           status: 'partial',
           summary:
             boundaryDiagnostics.length > 0
               ? `Recovery action ${action.id} returned malformed boundary data; its exact object identity was checkpointed, but write completion remains ambiguous.`
-              : `Recovery checkpoint persisted after ${action.id}.`,
+              : checkpointObjects.length > 0
+                ? `Recovery checkpoint persisted after ${action.id}.`
+                : actionResult.status === 'succeeded'
+                  ? `Recovery action ${action.id} completed without a new-object checkpoint.`
+                  : `Recovery action ${action.id} failed without an external write checkpoint.`,
           createdObjects,
           completedActionIds,
           warnings,
@@ -852,12 +866,13 @@ export class AurousServices {
           recoveryRunId,
           actionResult.status === 'succeeded' ? 'info' : 'error',
           'AUR-RECOVERY-104',
-          `Recovery action ${action.id} checkpointed.`,
+          `Recovery action ${action.id} recorded.`,
           {
             status: actionResult.status,
             command: invocation.command,
             durationMs: invocation.durationMs,
-            ambiguousWrite: boundaryDiagnostics.length > 0,
+            ambiguousWrite,
+            checkpointedObjectCount: checkpointObjects.length,
           },
         );
         if (actionResult.status !== 'succeeded') {
@@ -1221,4 +1236,15 @@ function mergeCreatedObjects(
   for (const object of next)
     merged.set(`${object.actionId}:${object.externalId ?? object.name}`, object);
   return [...merged.values()];
+}
+
+function recoveryActionCheckpointObjects(
+  action: AurousPlan['plannedActions'][number],
+  result: ExecutionResult,
+  malformedBoundary: boolean,
+): ExecutionResult['createdObjects'] {
+  if (malformedBoundary || result.status === 'succeeded' || action.operation === 'create') {
+    return result.createdObjects;
+  }
+  return [];
 }
