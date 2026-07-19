@@ -171,6 +171,95 @@ describe('shared destination resolution', () => {
     expect(multiple).toMatchObject({ id: 'team-product', source: 'user-choice' });
   });
 
+  it('binds an inspected Linear label by exact ID despite MCP type naming', async () => {
+    const adapter = createProductivityAdapter('linear');
+    const resolved = await resolveDestination({
+      adapter,
+      discovery: discovery(
+        'linear',
+        [candidate('team-product', 'Product', 'team')],
+        [
+          {
+            id: 'label-exact-id',
+            name: 'Launch',
+            type: 'issue_label',
+            destinationId: 'team-product',
+          },
+        ],
+      ),
+      objective: 'Add the Launch label',
+      projectName: 'Aurous',
+    });
+    const labelProposal: PlanProposal = {
+      ...proposal,
+      proposedWorkspaceStructure: [{ kind: 'label', name: 'Launch', purpose: 'Mark launch work.' }],
+      plannedActions: [
+        {
+          ...proposal.plannedActions[0]!,
+          objectType: 'label',
+          target: 'Launch',
+          description: 'Create the launch label.',
+        },
+      ],
+    };
+
+    const bound = adapter.bindDestination(labelProposal, resolved!);
+    expect(bound.plannedActions[0]?.properties).toContainEqual({
+      key: 'linear.dedupe.knownExternalId',
+      value: 'label-exact-id',
+    });
+    expect(bound.plannedActions[0]?.description).toContain('Reuse the exact verified existing');
+  });
+
+  it('selects a deterministic canonical exact object and surfaces duplicate risk', async () => {
+    const adapter = createProductivityAdapter('linear');
+    const resolved = await resolveDestination({
+      adapter,
+      discovery: discovery(
+        'linear',
+        [candidate('team-product', 'Product', 'team')],
+        [
+          {
+            id: 'JAS-11',
+            name: 'Prepare launch',
+            type: 'issue',
+            destinationId: 'team-product',
+          },
+          {
+            id: 'JAS-5',
+            name: 'Prepare launch',
+            type: 'issue',
+            destinationId: 'team-product',
+          },
+        ],
+      ),
+      objective: 'Prepare launch',
+      projectName: 'Aurous',
+    });
+    const issueProposal: PlanProposal = {
+      ...proposal,
+      proposedWorkspaceStructure: [
+        { kind: 'issue', name: 'Prepare launch', purpose: 'Prepare launch.' },
+      ],
+      plannedActions: [
+        {
+          ...proposal.plannedActions[0]!,
+          objectType: 'issue',
+          target: 'Prepare launch',
+          description: 'Create the launch issue.',
+        },
+      ],
+    };
+
+    const bound = adapter.bindDestination(issueProposal, resolved!);
+    expect(bound.plannedActions[0]?.properties).toContainEqual({
+      key: 'linear.dedupe.knownExternalId',
+      value: 'JAS-5',
+    });
+    expect(bound.warnings.join('\n')).toContain('selected one canonical exact object');
+    expect(bound.warnings.join('\n')).toContain('will remain untouched');
+  });
+
   it('honors an explicit friendly destination in the natural-language request first', async () => {
     const resolved = await resolveDestination({
       adapter: createProductivityAdapter('linear'),
@@ -277,7 +366,14 @@ describe('shared destination resolution', () => {
 describe('project context pack', () => {
   it('persists readable destination provenance and forgets it reversibly', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'aurous-context-pack-'));
-    await writeFile(path.join(root, 'README.md'), '# Goldsmith project\n');
+    await writeFile(
+      path.join(root, 'README.md'),
+      '# Goldsmith project\n\nA local-first workspace planner that turns project context into safe previews.\n',
+    );
+    await writeFile(
+      path.join(root, 'package.json'),
+      JSON.stringify({ name: 'goldsmith', description: 'Safe workspace planning.' }),
+    );
     const store = new ContextPackStore(root);
     await store.saveDestination(
       savedDestination('notion', 'page-product', 'Product', 'page', 'user-choice'),
@@ -289,8 +385,18 @@ describe('project context pack', () => {
     );
     expect(persisted).toMatchObject({
       schemaVersion: 1,
-      project: { name: path.basename(root), root, summary: 'Goldsmith project' },
+      project: {
+        name: path.basename(root),
+        root,
+        summary: 'A local-first workspace planner that turns project context into safe previews.',
+        summaryProvenance: {
+          kind: 'repository-files',
+          sources: ['README.md', 'package.json'],
+          maxSourceBytes: 16384,
+        },
+      },
       selectedPreset: 'software-launch',
+      selectedPresetSource: 'explicit-user',
       activeIntegrations: ['notion'],
       destinations: [
         {
@@ -328,5 +434,6 @@ function savedDestination(
     sourceDetail: 'Test provenance.',
     verifiedAt: inspectedAt,
     existingObjects: [],
+    discoveryWarnings: [],
   };
 }

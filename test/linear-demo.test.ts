@@ -80,6 +80,7 @@ describe('Linear demo planning', () => {
 
   it('saves the previewed plan and attempts no write when approval is declined', async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-linear-demo-'));
+    await markProject(workspace);
     const preset = await readFile(presetPath, 'utf8');
     await writeFile(path.join(workspace, 'linear-demo.json'), preset);
     const lines: string[] = [];
@@ -113,6 +114,7 @@ describe('Linear demo planning', () => {
 
   it('records missing Linear URLs as explicit compatibility notes', async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-linear-result-'));
+    await markProject(workspace);
     await writeFile(path.join(workspace, 'linear-demo.json'), await readFile(presetPath, 'utf8'));
     const output: Output = { log() {}, error() {} };
     const store = new LocalRunStore(workspace);
@@ -173,6 +175,7 @@ describe('Linear demo planning', () => {
 
   it('carries exact IDs from a compatible successful run into the next preview', async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-linear-replay-'));
+    await markProject(workspace);
     await writeFile(path.join(workspace, 'linear-demo.json'), await readFile(presetPath, 'utf8'));
     const output: Output = { log() {}, error() {} };
     const store = new LocalRunStore(workspace);
@@ -199,3 +202,7 @@ describe('Linear demo planning', () => {
     expect(repeat.assumptions.join('\n')).toContain('Exact external IDs');
   });
 });
+
+function markProject(workspace: string): Promise<void> {
+  return writeFile(path.join(workspace, 'package.json'), '{"name":"linear-demo"}\n');
+}

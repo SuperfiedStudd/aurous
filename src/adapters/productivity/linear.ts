@@ -2,6 +2,11 @@ import type { AurousPlan } from '../../domain/schemas.js';
 import type { ProductivityAdapter } from './types.js';
 import type { DestinationCandidate, ResolvedDestination } from '../../domain/destinations.js';
 import type { PlanProposal } from '../../domain/schemas.js';
+import {
+  canonicalExactObject,
+  exactBindingWarnings,
+  normalizedObjectType,
+} from './exact-bindings.js';
 
 export class LinearAdapter implements ProductivityAdapter {
   readonly name = 'linear' as const;
@@ -26,18 +31,17 @@ export class LinearAdapter implements ProductivityAdapter {
   }
 
   destinationPlanningInstructions(destination: ResolvedDestination): string {
-    return `The exact approved Linear team ID is ${JSON.stringify(destination.id)} (${destination.name}). Put linear.teamId=${JSON.stringify(destination.id)} and linear.team=${JSON.stringify(destination.name)} on every action. Existing projects, milestones, labels, and issues may be reused only by exact IDs from the discovery snapshot.`;
+    return `The exact approved Linear team ID is ${JSON.stringify(destination.id)} (${destination.name}). Put linear.teamId=${JSON.stringify(destination.id)} and linear.team=${JSON.stringify(destination.name)} on every action. Existing projects, milestones, labels, and issues may be reused only by exact IDs from the discovery snapshot. When an issue belongs to an inspected existing project, include both linear.project (friendly display name) and linear.projectId (its exact discovered ID). Likewise pair existing milestone and label names with linear.milestoneId and linear.labelIds. Exact IDs authorize relationships and reuse; names never do.`;
   }
 
   bindDestination(proposal: PlanProposal, destination: ResolvedDestination): PlanProposal {
     return {
       ...proposal,
       plannedActions: proposal.plannedActions.map((action) => {
-        const existing = destination.existingObjects.find(
-          (object) => object.name === action.target && object.type === action.objectType,
-        );
+        const existing = canonicalExactObject(destination, action);
         const properties = action.properties.filter((property) => {
           if (property.key === 'linear.team' || property.key === 'linear.teamId') return false;
+          if (property.key === 'linear.dedupe.identitySource') return false;
           if (
             existing &&
             (property.key === 'linear.dedupe.knownExternalId' ||
@@ -54,6 +58,7 @@ export class LinearAdapter implements ProductivityAdapter {
           properties.push({ key: 'linear.dedupe.knownExternalId', value: existing.id });
           if (existing.url) properties.push({ key: 'linear.dedupe.knownUrl', value: existing.url });
         }
+        bindLinearRelationshipIds(properties, destination);
         return {
           ...action,
           description: existing
@@ -65,6 +70,12 @@ export class LinearAdapter implements ProductivityAdapter {
       assumptions: [
         ...proposal.assumptions,
         `The exact verified Linear team is ${destination.name}; its internal ID is embedded in every action.`,
+      ],
+      warnings: [
+        ...new Set([
+          ...proposal.warnings,
+          ...exactBindingWarnings(destination, proposal.plannedActions),
+        ]),
       ],
     };
   }
@@ -80,6 +91,7 @@ Prefer a focused project with a clear description, milestones or cycles only whe
 
 LINEAR DEMO CONTRACT:
 - Resolve only the exact approved team ID from linear.teamId. linear.team is display-only. Before writes, inspect that team's statuses and resolve the assignee token. Never select a different team.
+- Resolve project, milestone, and label relationships from linear.projectId, linear.milestoneId, and linear.labelIds when present. Their friendly-name properties are display-only and cannot authorize a relationship.
 - Execute actions in dependency order. Map linear.* properties directly to the official MCP fields for project, issue label, milestone, and issue creation.
 - If an action has linear.dedupe.knownExternalId, fetch that exact ID first and verify its type, title/name, approved team, and approved project where applicable. A compatible exact-ID match must be skipped and is authoritative even if same-title duplicates exist. Exclude that action from all name inventories. If exact-ID verification fails, fail the action and do not fall back to name lookup or creation.
 - Label exact-ID verification uses the MCP capability that actually exists: call list_issue_labels once for the approved team with limit 250 and no name filter, locate each known label by its exact ID, then verify its exact name. This is exact-ID verification, not name fallback. If the known label ID is absent or its name differs, fail that action and never create a replacement.
@@ -92,4 +104,60 @@ LINEAR DEMO CONTRACT:
 - If a requested field is unsupported or a workspace convention is unavailable, omit or adjust that field only when the core object can still be useful, and describe the exact adjustment in compatibilityNotes. Never silently degrade.
 - Do not update, archive, delete, or create anything outside the approved actions.`;
   }
+}
+
+function bindLinearRelationshipIds(
+  properties: PlanProposal['plannedActions'][number]['properties'],
+  destination: ResolvedDestination,
+): void {
+  bindSingleRelationship(properties, destination, ['linear.project', 'project'], 'project');
+  bindSingleRelationship(properties, destination, ['linear.milestone', 'milestone'], 'milestone');
+  const labels = propertyValue(properties, ['linear.labels', 'labels']);
+  if (!labels) return;
+  let names: string[];
+  try {
+    const parsed = JSON.parse(labels) as unknown;
+    names = Array.isArray(parsed) && parsed.every((item) => typeof item === 'string') ? parsed : [];
+  } catch {
+    names = [];
+  }
+  const ids = names.map(
+    (name) =>
+      destination.existingObjects.find(
+        (object) => normalizedObjectType(object.type) === 'label' && object.name === name,
+      )?.id,
+  );
+  if (ids.length === names.length && ids.every(Boolean))
+    setProperty(properties, 'linear.labelIds', JSON.stringify(ids));
+}
+
+function bindSingleRelationship(
+  properties: PlanProposal['plannedActions'][number]['properties'],
+  destination: ResolvedDestination,
+  nameKeys: string[],
+  type: string,
+): void {
+  const name = propertyValue(properties, nameKeys);
+  if (!name) return;
+  const matches = destination.existingObjects
+    .filter((object) => normalizedObjectType(object.type) === type && object.name === name)
+    .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+  if (matches[0]) setProperty(properties, `linear.${type}Id`, matches[0].id);
+}
+
+function propertyValue(
+  properties: PlanProposal['plannedActions'][number]['properties'],
+  keys: string[],
+): string | undefined {
+  return properties.find((property) => keys.includes(property.key))?.value;
+}
+
+function setProperty(
+  properties: PlanProposal['plannedActions'][number]['properties'],
+  key: string,
+  value: string,
+): void {
+  const existing = properties.find((property) => property.key === key);
+  if (existing) existing.value = value;
+  else properties.push({ key, value });
 }

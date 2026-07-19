@@ -86,6 +86,10 @@ async function fixture(
 ) {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-shell-'));
   await writeFile(path.join(workspace, 'README.md'), '# Interactive demo\n');
+  await writeFile(
+    path.join(workspace, 'package.json'),
+    '{"name":"interactive-demo","description":"Interactive demo project"}\n',
+  );
   await writeFile(path.join(workspace, 'linear.json'), await readFile(presetPath, 'utf8'));
   const store = new LocalRunStore(workspace);
   await store.init({ defaultAgent: 'mock', defaultTool: 'notion' });
@@ -170,6 +174,36 @@ describe('dynamic interactive Aurous shell', () => {
     expect(terminal.clearCount).toBe(1);
   });
 
+  it('clears a legacy implicit preset instead of silently activating it', async () => {
+    const { shell, workspace } = await fixture(['/exit']);
+    await writeFile(
+      path.join(workspace, '.aurous', 'context.json'),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        project: {
+          name: 'interactive-demo',
+          root: workspace,
+          summary:
+            'Interactive demo project with enough useful detail for a bounded project summary.',
+        },
+        selectedPreset: 'linear-software-launch-v1',
+        activeIntegrations: [],
+        destinations: [],
+        workspacePreferences: { verbose: false },
+        updatedAt: '2026-07-19T12:00:00.000Z',
+      })}\n`,
+    );
+
+    await shell.run();
+
+    const persisted = JSON.parse(
+      await readFile(path.join(workspace, '.aurous', 'context.json'), 'utf8'),
+    ) as { selectedPreset?: string; selectedPresetSource?: string };
+    expect(shell.snapshot().preset).toBeUndefined();
+    expect(persisted.selectedPreset).toBeUndefined();
+    expect(persisted.selectedPresetSource).toBeUndefined();
+  });
+
   it('automatically resolves one Linear team, supports cancel, then completes', async () => {
     const { shell, store, terminal } = await fixture([
       '/target linear',
@@ -196,10 +230,10 @@ describe('dynamic interactive Aurous shell', () => {
     const rendered = terminal.rendered();
     expect(rendered).toContain('✓ Using Product team');
     expect(rendered).toContain('Approval canceled. No external writes were attempted.');
-    expect(rendered).toContain('Executing approved workspace actions · 0/11');
-    expect(rendered).toContain('Approved actions completed · 11/11');
-    expect(rendered).toContain('Created objects: 11');
-    expect(rendered).toContain('Run succeeded · 11 completed · 11 objects');
+    expect(rendered).toContain('Executing approved workspace actions · 0/4');
+    expect(rendered).toContain('Approved actions completed · 4/4');
+    expect(rendered).toContain('Created objects: 4');
+    expect(rendered).toContain('Run succeeded · 4 completed · 4 objects');
   });
 
   it('keeps recoverable command mistakes concise instead of printing fatal diagnostics', async () => {
@@ -366,6 +400,27 @@ describe('dynamic interactive Aurous shell', () => {
     );
     expect(terminal.rendered()).not.toContain('Fatal internal error');
     expect(terminal.rendered()).not.toContain('MCP');
+  });
+
+  it('refuses planning from a markerless launch directory without creating context', async () => {
+    const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-no-project-'));
+    const store = new LocalRunStore(workspace);
+    await store.init({ defaultAgent: 'mock', defaultTool: 'linear' });
+    const terminal = new ScriptedTerminal(['Plan Linear work from this directory', '/exit']);
+    const renderer = new DynamicShellRenderer(terminal);
+    const services = new AurousServices({ workspace, store, output: renderer });
+    const shell = new AurousShell({ workspace, store, services, renderer });
+
+    await shell.run();
+
+    expect(terminal.rendered()).toContain('No project selected');
+    expect(terminal.rendered()).toContain(
+      'Aurous did not find a project in this directory. Change into the project directory and launch Aurous again.',
+    );
+    await expect(
+      readFile(path.join(workspace, '.aurous', 'context.json'), 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await store.listRuns()).toEqual([]);
   });
 
   it('cancels composer input first and exits on a second Ctrl+C', async () => {

@@ -86,7 +86,7 @@ export function formatInteractiveHeader(
     'AUROUS · PRODUCTIVITY, RESOLVED.',
     '',
     `agent ${agentDisplayName(metadata.agent)}  ·  model ${metadata.model}  ·  target ${toolDisplayName(metadata.target)}${metadata.destination ? `  ·  destination ${metadata.destination}` : metadata.linearTeam ? `  ·  team ${metadata.linearTeam}` : ''}`,
-    `project ${metadata.project}  ·  context ${metadata.contextPaths.join(', ')}`,
+    `project ${metadata.project}  ·  context ${metadata.contextPaths.join(', ') || 'none'}`,
     `mode ${metadata.mode}  ·  state ${metadata.state ?? metadata.mode}${metadata.preset ? `  ·  preset ${metadata.preset}` : ''}`,
     ...(metadata.lastRunId ? [`run ${metadata.lastRunId}`] : []),
   ];
@@ -161,7 +161,7 @@ export function formatShellStatus(
       `target   ${toolDisplayName(metadata.target)}  ·  mode ${metadata.mode}`,
       ...(metadata.state ? [`state    ${metadata.state}`] : []),
       `project  ${metadata.project}`,
-      `context  ${metadata.contextPaths.join(', ')}`,
+      `context  ${metadata.contextPaths.join(', ') || 'none'}`,
       ...(metadata.preset ? [`preset   ${metadata.preset}`] : []),
       ...(metadata.linearTeam && !metadata.destination ? [`team     ${metadata.linearTeam}`] : []),
       ...(metadata.destination ? [`location ${metadata.destination}`] : []),

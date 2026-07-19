@@ -14,7 +14,7 @@ import { formatError } from './output.js';
 import { formatApprovalRequest, formatPlainNotice, formatShellStatus } from './presentation.js';
 import type { RunStore } from './run-store.js';
 import type { AurousServices } from './services.js';
-import { ContextPackStore, detectProjectRoot, destinationFor } from './context-pack.js';
+import { ContextPackStore, destinationFor, findProjectRoot } from './context-pack.js';
 import type { DestinationChoiceRequest } from './destination-resolver.js';
 import {
   DynamicShellRenderer,
@@ -28,6 +28,7 @@ export interface ShellDependencies {
   store: RunStore;
   services: AurousServices;
   renderer: DynamicShellRenderer;
+  projectRoot?: string;
   initialLinearTeam?: string;
 }
 
@@ -61,19 +62,21 @@ export class AurousShell {
   private activePrompt?: PromptKind;
   private promptCancelled = false;
   private lastComposerInterrupt = 0;
+  private projectRoot: string | undefined;
 
   constructor(private readonly dependencies: ShellDependencies) {
     this.terminal = dependencies.renderer.terminal;
   }
 
   async run(): Promise<void> {
+    this.projectRoot =
+      this.dependencies.projectRoot ?? (await findProjectRoot(this.dependencies.workspace));
     const config = await this.loadOrInitializeConfig();
     this.state = {
       agent: config.defaultAgent,
       model: defaultModel(config.defaultAgent),
       target: config.defaultTool,
-      contextPaths: ['.'],
-      preset: 'software-launch',
+      contextPaths: this.projectRoot ? ['.'] : [],
       ...(this.dependencies.initialLinearTeam || process.env.AUROUS_LINEAR_TEAM
         ? {
             linearTeam: this.dependencies.initialLinearTeam ?? process.env.AUROUS_LINEAR_TEAM ?? '',
@@ -81,9 +84,9 @@ export class AurousShell {
         : {}),
       history: [],
       state: 'Ready',
-      project: path.basename(this.dependencies.workspace),
+      project: this.projectRoot ? path.basename(this.projectRoot) : 'No project selected',
     };
-    await this.refreshContextDestination();
+    if (this.projectRoot) await this.refreshContextDestination();
     this.terminal.onInterrupt(() => this.handleInterrupt());
     this.dependencies.renderer.start(this.view());
 
@@ -254,13 +257,14 @@ export class AurousShell {
 
   private async contextCommand(args: string[]): Promise<void> {
     const state = this.requireState();
+    this.requireProjectRoot();
     if (args.length === 0) {
       this.dependencies.renderer.notice(`Context ${state.contextPaths.join(', ')}`);
       return;
     }
     const subcommand = args[0]?.toLowerCase();
     if (subcommand === 'show' || subcommand === 'destinations') {
-      const pack = await this.contextStore().then((store) => store.loadOrCreate(state.preset));
+      const pack = await this.contextStore().loadOrCreate(state.preset);
       const lines =
         subcommand === 'show'
           ? [
@@ -290,7 +294,7 @@ export class AurousShell {
     if (subcommand === 'forget') {
       const parsed = ToolNameSchema.safeParse(args[1]?.toLowerCase());
       if (!parsed.success) throw shellInputError('context', 'Use /context forget notion|linear.');
-      const store = await this.contextStore();
+      const store = this.contextStore();
       await store.forgetDestination(parsed.data);
       if (state.target === parsed.data) {
         delete state.destinationName;
@@ -332,11 +336,12 @@ export class AurousShell {
       state.preset = 'software-launch';
     else throw shellInputError('preset', 'Choose software-launch or none.');
     this.setReady(`Preset ${state.preset ?? 'none'}`);
-    void this.contextStore().then((store) => store.setPreset(state.preset));
+    void this.contextStore().setPreset(state.preset);
   }
 
   private async plan(objective?: string): Promise<boolean> {
     const state = this.requireState();
+    this.requireProjectRoot();
     this.setPhase('Planning');
     const controller = this.beginActivity();
     const model = invocationModel(state);
@@ -549,6 +554,7 @@ export class AurousShell {
       code.startsWith('AUR-SHELL') ||
       code.startsWith('AUR-CTX') ||
       code.startsWith('AUR-CONTEXT') ||
+      code.startsWith('AUR-PROJECT') ||
       code.startsWith('AUR-DEST') ||
       code === 'AUR-APPLY-004'
     ) {
@@ -686,13 +692,19 @@ export class AurousShell {
     }
   }
 
-  private async contextStore(): Promise<ContextPackStore> {
-    return new ContextPackStore(await detectProjectRoot(this.dependencies.workspace));
+  private contextStore(): ContextPackStore {
+    return new ContextPackStore(this.requireProjectRoot());
   }
 
   private async refreshContextDestination(): Promise<void> {
-    if (!this.state) return;
-    const pack = await (await this.contextStore()).loadOrCreate(this.state.preset);
+    if (!this.state || !this.projectRoot) return;
+    const store = this.contextStore();
+    let pack = await store.loadOrCreate(this.state.preset);
+    if (pack.selectedPreset && !pack.selectedPresetSource) {
+      pack = await store.setPreset(undefined);
+    } else if (pack.selectedPresetSource === 'explicit-user' && pack.selectedPreset) {
+      this.state.preset = normalizePreset(pack.selectedPreset);
+    }
     this.state.project = pack.project.name;
     const destination = destinationFor(pack, this.state.target);
     if (destination) {
@@ -700,6 +712,22 @@ export class AurousShell {
       if (this.state.target === 'linear') this.state.linearTeam = destination.name;
     }
   }
+
+  private requireProjectRoot(): string {
+    if (this.projectRoot) return this.projectRoot;
+    throw new AurousError({
+      code: 'AUR-PROJECT-001',
+      summary: 'Aurous did not find a project in this directory.',
+      probableCause:
+        'The shell was launched outside a directory containing .git, package.json, or an existing project context pack.',
+      nextAction: 'Change into the project directory and launch Aurous again.',
+      severity: 'recoverable',
+    });
+  }
+}
+
+function normalizePreset(preset: string): string {
+  return preset === 'linear-software-launch-v1' ? 'software-launch' : preset;
 }
 
 export function createReadlineShellTerminal(
@@ -801,6 +829,8 @@ export function tokenize(input: string): string[] {
 }
 
 function hintFor(state: ShellState): string {
+  if (state.contextPaths.length === 0)
+    return 'No project detected. Change into a project directory and relaunch Aurous.';
   switch (state.state) {
     case 'Selecting Destination':
       return 'Choose a destination by number, or type cancel.';

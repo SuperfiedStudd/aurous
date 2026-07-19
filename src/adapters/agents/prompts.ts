@@ -8,6 +8,7 @@ import type {
 import type { ProductivityAdapter } from '../productivity/types.js';
 import type { RecoveryPlan } from '../../domain/recovery.js';
 import type { DestinationDiscoveryInput } from './types.js';
+import { formatIntentContract } from '../../core/intent.js';
 
 export function buildDestinationDiscoveryPrompt(input: DestinationDiscoveryInput): string {
   const documents = input.context.documents
@@ -62,6 +63,9 @@ PLANNING SAFETY RULES:
 - Every workspace item must include parent; use null when it has no parent.
 - Every planned action's properties field must be an array of unique {"key":"...","value":"..."} entries. Use descriptive namespaced keys and JSON-encoded strings for lists when needed so no Notion or Linear detail is lost.
 - The exact destination below is already resolved. Never emit a placeholder, ask the user for an ID, or substitute another destination.
+
+USER-INTENT CONTRACT:
+${formatIntentContract(objective)}
 
 User objective:
 ${objective}

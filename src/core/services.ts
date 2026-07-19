@@ -6,6 +6,7 @@ import {
   type AgentDiagnostic,
 } from '../adapters/agents/index.js';
 import { createProductivityAdapter } from '../adapters/productivity/index.js';
+import { normalizedObjectType } from '../adapters/productivity/exact-bindings.js';
 import {
   AgentNameSchema,
   AurousPlanSchema,
@@ -53,6 +54,7 @@ import type { RunStore } from './run-store.js';
 import { ContextPackStore, detectProjectRoot, destinationFor } from './context-pack.js';
 import { resolveDestination, type DestinationChooser } from './destination-resolver.js';
 import { DestinationDiscoverySchema, type ResolvedDestination } from '../domain/destinations.js';
+import { uncoveredRequirements, validateObjectiveIntent } from './intent.js';
 
 export interface ServiceDependencies {
   workspace: string;
@@ -195,6 +197,7 @@ export class AurousServices {
         nextAction: 'Describe the outcome you want with --prompt.',
       });
     }
+    const projectRoot = await detectProjectRoot(this.dependencies.workspace);
     const runId = createRunId(this.now());
     const timestamp = this.now().toISOString();
     if (!options.embedded)
@@ -208,7 +211,7 @@ export class AurousServices {
         }),
       );
     const context = await ingestContext({
-      cwd: this.dependencies.workspace,
+      cwd: projectRoot,
       paths: options.contextPaths,
     });
     if (!options.embedded)
@@ -227,6 +230,7 @@ export class AurousServices {
       ...(options.chooseDestination ? { choose: options.chooseDestination } : {}),
       ...(options.destinationOverride ? { explicitOverride: options.destinationOverride } : {}),
       ...(options.preset ? { preset: options.preset } : {}),
+      projectRoot,
     });
     if (!destination) throw destinationCancelled();
 
@@ -269,15 +273,26 @@ export class AurousServices {
         invocation.stdout,
         invocation.stderr,
       );
-      const proposal = PlanProposalSchema.parse(
+      const bound = PlanProposalSchema.parse(
         productivity.bindDestination(PlanProposalSchema.parse(invocation.value), destination),
       );
+      const proposal = PlanProposalSchema.parse({
+        ...bound,
+        assumptions: [
+          ...bound.assumptions,
+          ...(options.preset
+            ? [`Preset explicitly selected: ${options.preset}. User intent remains binding.`]
+            : ['Planning mode: natural-language intent; no preset was inferred.']),
+        ],
+      });
       validateProposalSemantics(proposal);
+      validateObjectiveIntent(objective, proposal);
       validateResolvedPlanDestination(
         proposal,
         productivity.destination.exactIdProperty,
         destination.id,
       );
+      validateExactObjectAuthorizations(proposal, toolName, destination);
       const plan = AurousPlanSchema.parse({
         ...proposal,
         schemaVersion: 1,
@@ -333,6 +348,7 @@ export class AurousServices {
   async planLinearDemo(options: LinearDemoPlanOptions): Promise<AurousPlan> {
     const config = await this.dependencies.store.loadConfig();
     const agentName = AgentNameSchema.parse(options.agent ?? config.defaultAgent);
+    const projectRoot = await detectProjectRoot(this.dependencies.workspace);
     const runId = createRunId(this.now());
     const timestamp = this.now().toISOString();
     if (!options.embedded)
@@ -346,24 +362,26 @@ export class AurousServices {
         }),
       );
     const context = await ingestContext({
-      cwd: this.dependencies.workspace,
+      cwd: projectRoot,
       paths: options.contextPaths,
     });
     const preset = parseLinearDemoContext(context);
+    const requestedObjective =
+      options.objective ??
+      `Set up Linear for ${preset.projectName}${options.team ? ` in ${options.team}` : ''}`;
     const adapter = this.agentFactory(agentName);
     const productivity = createProductivityAdapter('linear');
     const destination = await this.resolvePlanningDestination({
       adapter,
       productivity,
       context,
-      objective:
-        options.objective ??
-        `Set up Linear for ${preset.projectName}${options.team ? ` in ${options.team}` : ''}`,
+      objective: requestedObjective,
       timeoutMs: config.timeoutMs,
       ...(options.model ? { model: options.model } : {}),
       ...(options.chooseDestination ? { choose: options.chooseDestination } : {}),
       ...(options.destinationOverride ? { explicitOverride: options.destinationOverride } : {}),
       preset: options.preset ?? preset.preset,
+      projectRoot,
     });
     if (!destination) throw destinationCancelled();
     if (!options.embedded) {
@@ -387,14 +405,37 @@ export class AurousServices {
       context,
       preset,
     });
+    const uncovered = uncoveredRequirements(requestedObjective, generatedPlan);
+    const presetPlan = AurousPlanSchema.parse({
+      ...generatedPlan,
+      objective: requestedObjective,
+      assumptions: [
+        ...generatedPlan.assumptions,
+        `Preset explicitly selected: ${preset.preset}. User intent remains binding.`,
+      ],
+      warnings: [
+        ...generatedPlan.warnings,
+        ...uncovered.map(
+          (requirement) =>
+            `The explicitly selected preset does not support the material requirement ${JSON.stringify(requirement)}.`,
+        ),
+      ],
+    });
+    const destinationBoundProposal = productivity.bindDestination(presetPlan, destination);
+    const destinationBoundPlan = AurousPlanSchema.parse({
+      ...presetPlan,
+      ...destinationBoundProposal,
+    });
     const plan = AurousPlanSchema.parse(
-      productivity.bindDestination(
-        await this.attachKnownLinearReferences(generatedPlan, destination.id),
-        destination,
+      await this.attachKnownLinearReferences(
+        AurousPlanSchema.parse(destinationBoundPlan),
+        destination.id,
       ),
     );
     validateProposalSemantics(plan);
+    validateObjectiveIntent(requestedObjective, plan);
     validateResolvedPlanDestination(plan, productivity.destination.exactIdProperty, destination.id);
+    validateExactObjectAuthorizations(plan, 'linear', destination);
     const record: RunRecord = {
       runId,
       createdAt: timestamp,
@@ -426,7 +467,7 @@ export class AurousServices {
   }
 
   private async attachKnownLinearReferences(plan: AurousPlan, team: string): Promise<AurousPlan> {
-    const references = new Map<string, { externalId: string; url?: string }>();
+    const references = new Map<string, { externalId: string; url?: string; sourceRunId: string }>();
     const records = (await this.dependencies.store.listRuns()).reverse();
     for (const record of records) {
       if (
@@ -458,6 +499,7 @@ export class AurousServices {
             references.set(key, {
               externalId: reference.externalId,
               ...(reference.url ? { url: reference.url } : {}),
+              sourceRunId: record.runId,
             });
         }
       } catch {
@@ -468,6 +510,8 @@ export class AurousServices {
     return {
       ...plan,
       plannedActions: plan.plannedActions.map((action) => {
+        if (action.properties.some((property) => property.key === 'linear.dedupe.knownExternalId'))
+          return action;
         const reference = references.get(`${action.objectType}\u0000${action.target}`);
         if (!reference) return action;
         return {
@@ -476,6 +520,10 @@ export class AurousServices {
             ...action.properties,
             { key: 'linear.dedupe.knownExternalId', value: reference.externalId },
             ...(reference.url ? [{ key: 'linear.dedupe.knownUrl', value: reference.url }] : []),
+            {
+              key: 'linear.dedupe.identitySource',
+              value: `verified-run:${reference.sourceRunId}`,
+            },
           ],
         };
       }),
@@ -497,8 +545,9 @@ export class AurousServices {
     choose?: DestinationChooser;
     explicitOverride?: { id: string; name: string };
     preset?: string;
+    projectRoot?: string;
   }): Promise<ResolvedDestination | undefined> {
-    const projectRoot = await detectProjectRoot(this.dependencies.workspace);
+    const projectRoot = input.projectRoot ?? (await detectProjectRoot(this.dependencies.workspace));
     const contextStore = new ContextPackStore(projectRoot);
     const pack = await contextStore.loadOrCreate(input.preset);
     const discoveryId = createRunId(this.now()).replace(/^run-/, 'discovery-');
@@ -1531,6 +1580,135 @@ function validateResolvedPlanDestination(
   }
 }
 
+function validateExactObjectAuthorizations(
+  proposal: ReturnType<typeof PlanProposalSchema.parse>,
+  tool: ToolName,
+  destination: ResolvedDestination,
+): void {
+  const namespace = tool === 'linear' ? 'linear' : tool === 'notion' ? 'notion' : 'mock';
+  const exactKey = `${namespace}.dedupe.knownExternalId`;
+  const inspectedById = new Map(destination.existingObjects.map((object) => [object.id, object]));
+  for (const action of proposal.plannedActions) {
+    const knownId = action.properties.find((property) => property.key === exactKey)?.value;
+    if (requiresExactExistingId(action) && !knownId) {
+      throw new AurousError({
+        code: 'AUR-PLAN-009',
+        summary: `Action ${action.id} (${action.objectType} ${JSON.stringify(action.target)}) proposes reuse or update without an exact external ID.`,
+        probableCause:
+          'Discovery found or implied an existing object, but the immutable action retained only a name-based authorization.',
+        nextAction:
+          'No writes were attempted. Inspect the object by exact ID or regenerate this action as an explicit create decision.',
+      });
+    }
+    if (knownId) {
+      const inspected = inspectedById.get(knownId);
+      const previouslyVerified = action.properties
+        .find((property) => property.key === `${namespace}.dedupe.identitySource`)
+        ?.value.match(/^verified-run:run-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$/);
+      if (
+        !previouslyVerified &&
+        (!inspected ||
+          inspected.name !== action.target ||
+          normalizedObjectType(inspected.type) !== normalizedObjectType(action.objectType))
+      ) {
+        throw new AurousError({
+          code: 'AUR-PLAN-010',
+          summary: `Action ${action.id} contains exact ID ${knownId}, but current inspection did not verify it as ${action.objectType} ${JSON.stringify(action.target)}.`,
+          probableCause: 'A stale or name-matched identity entered the proposed immutable plan.',
+          nextAction:
+            'No writes were attempted. Repeat read-only discovery and exact-ID inspection.',
+        });
+      }
+    }
+    if (tool === 'linear') validateLinearRelationshipIds(action, destination);
+  }
+}
+
+function validateLinearRelationshipIds(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+  destination: ResolvedDestination,
+): void {
+  validateLinearSingleRelationship(action, destination, 'project');
+  validateLinearSingleRelationship(action, destination, 'milestone');
+  const labels = action.properties.find((property) =>
+    ['linear.labels', 'labels'].includes(property.key),
+  )?.value;
+  if (!labels) return;
+  let names: string[] = [];
+  try {
+    const parsed = JSON.parse(labels) as unknown;
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) names = parsed;
+  } catch {
+    return;
+  }
+  const existingNames = names.filter((name) =>
+    destination.existingObjects.some(
+      (object) => normalizedObjectType(object.type) === 'label' && object.name === name,
+    ),
+  );
+  const idsValue = action.properties.find((property) => property.key === 'linear.labelIds')?.value;
+  if (!idsValue && existingNames.length === 0) return;
+  let ids: string[] = [];
+  try {
+    const parsed = idsValue ? (JSON.parse(idsValue) as unknown) : undefined;
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) ids = parsed;
+  } catch {
+    // The precise action error below is safer than accepting malformed IDs.
+  }
+  if (
+    ids.length !== names.length ||
+    names.some((name, index) => {
+      const object = destination.existingObjects.find((candidate) => candidate.id === ids[index]);
+      return !object || normalizedObjectType(object.type) !== 'label' || object.name !== name;
+    })
+  )
+    throw exactRelationshipError(action.id, 'label');
+}
+
+function validateLinearSingleRelationship(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+  destination: ResolvedDestination,
+  type: 'project' | 'milestone',
+): void {
+  const name = action.properties.find((property) =>
+    [`linear.${type}`, type].includes(property.key),
+  )?.value;
+  if (!name) return;
+  const existing = destination.existingObjects.some(
+    (object) => normalizedObjectType(object.type) === type && object.name === name,
+  );
+  const id = action.properties.find((property) => property.key === `linear.${type}Id`)?.value;
+  if (!id && !existing) return;
+  const verified = destination.existingObjects.find((object) => object.id === id);
+  if (!verified || normalizedObjectType(verified.type) !== type || verified.name !== name)
+    throw exactRelationshipError(action.id, type);
+}
+
+function exactRelationshipError(actionId: string, type: string): AurousError {
+  return new AurousError({
+    code: 'AUR-PLAN-011',
+    summary: `Action ${actionId} references an existing Linear ${type} without its verified exact ID.`,
+    probableCause:
+      'The relationship was authorized by a friendly name instead of current inspection.',
+    nextAction: 'No writes were attempted. Bind the inspected relationship ID before preview.',
+  });
+}
+
+function requiresExactExistingId(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+): boolean {
+  return (
+    action.operation === 'update' ||
+    /\b(?:reuse|reconcile|skip)\b/i.test(action.description) ||
+    action.properties.some(
+      (property) =>
+        /\b(?:reuse|existing)\b/i.test(property.key) &&
+        !property.key.endsWith('.knownExternalId') &&
+        !property.key.endsWith('.knownUrl'),
+    )
+  );
+}
+
 function validateExecutablePlanDestination(plan: AurousPlan): void {
   const adapter = createProductivityAdapter(plan.tool);
   const key = adapter.destination.exactIdProperty;
@@ -1547,6 +1725,22 @@ function validateExecutablePlanDestination(plan: AurousPlan): void {
       runId: plan.runId,
       severity: 'recoverable',
     });
+  }
+  for (const action of plan.plannedActions) {
+    if (
+      requiresExactExistingId(action) &&
+      !action.properties.some((property) => property.key.endsWith('.dedupe.knownExternalId'))
+    ) {
+      throw new AurousError({
+        code: 'AUR-APPLY-005',
+        summary: `Saved action ${action.id} cannot execute because its reuse or update target has no exact external ID.`,
+        probableCause:
+          'The saved plan predates exact-ID reuse validation or lost its identity binding.',
+        nextAction: 'Create a new plan after read-only destination inspection.',
+        runId: plan.runId,
+        severity: 'recoverable',
+      });
+    }
   }
 }
 

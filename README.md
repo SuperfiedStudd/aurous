@@ -34,11 +34,13 @@ Start with configuration commands when needed, then ask naturally:
 Set up Linear for this project using my current context
 ```
 
-A natural-language request selects an explicitly named Notion or Linear target, inspects the connected integration read-only, resolves a safe destination, generates and saves the Aurous plan, prints the complete preview, requires typed `apply` approval, executes through the existing adapter, records the result, and returns to the composer. The shell starts with the detected project root (`.`) visible as its context; use `/context <paths...>` before planning to narrow or replace it.
+A natural-language request selects an explicitly named Notion or Linear target, inspects the connected integration read-only, resolves a safe destination, generates and saves the Aurous plan, prints the complete preview, requires typed `apply` approval, executes through the existing adapter, records the result, and returns to the composer. Natural-language requests use intent-preserving agent planning by default; presets are activated only by an explicit `/preset` command or a dedicated demo command. The shell starts with the detected project root (`.`) visible as its context; use `/context <paths...>` before planning to narrow or replace it.
+
+Aurous detects projects from `.git`, `package.json`, or an existing project-local `.aurous/context.json`. When launched from a broad directory such as `~` without a project marker, it does not ingest that directory or create a home-directory context pack; it asks you to `cd` into the project and relaunch.
 
 When only one Notion location or Linear team is available, Aurous selects it automatically. When several are safe, the shell shows friendly numbered names, reprompts on blank input, accepts `cancel`, saves the selected exact identity internally, and resumes the suspended request. Normal onboarding never asks for a page URL, workspace ID, team key, or UUID.
 
-The versioned project context pack lives at `.aurous/context.json`. `/context show` explains the current project state, `/context destinations` shows saved destination IDs and provenance for inspection, and `/context forget notion|linear` removes a saved choice. Advanced users can stage a verified override with `/context override <integration> <id-or-url> <friendly-name>`.
+The versioned project context pack lives at `.aurous/context.json`. It stores a bounded repository summary with source provenance, never file contents or credentials. `/context show` explains the current project state, `/context destinations` shows saved destination IDs and provenance for inspection, and `/context forget notion|linear` removes a saved choice. Advanced users can stage a verified override with `/context override <integration> <id-or-url> <friendly-name>`.
 
 Available slash commands are `/help`, `/agent`, `/model`, `/target`, `/context`, `/preset`, `/plan`, `/apply`, `/runs`, `/status`, `/clear`, and `/exit`. Run `/help` inside the shell for accepted arguments.
 

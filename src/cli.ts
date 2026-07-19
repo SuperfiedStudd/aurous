@@ -9,6 +9,7 @@ import { formatApprovalPrompt } from './core/presentation.js';
 import { AurousShell, createReadlineShellTerminal } from './core/shell.js';
 import { DynamicShellRenderer, type ShellTerminal } from './core/shell-renderer.js';
 import type { DestinationChoiceRequest } from './core/destination-resolver.js';
+import { findProjectRoot } from './core/context-pack.js';
 
 export interface CliDependencies {
   cwd?: string;
@@ -39,16 +40,20 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     });
 
   const launchShell = async () => {
+    const projectRoot = await findProjectRoot(cwd);
+    const shellWorkspace = projectRoot ?? cwd;
+    const shellStore = new LocalRunStore(shellWorkspace);
     const terminal = dependencies.shellTerminal ?? createReadlineShellTerminal();
     const renderer = new DynamicShellRenderer(terminal);
     const shellServices = new AurousServices({
-      workspace: cwd,
-      store,
+      workspace: shellWorkspace,
+      store: shellStore,
       output: renderer,
     });
     await new AurousShell({
-      workspace: cwd,
-      store,
+      workspace: shellWorkspace,
+      ...(projectRoot ? { projectRoot } : {}),
+      store: shellStore,
       services: shellServices,
       renderer,
     }).run();

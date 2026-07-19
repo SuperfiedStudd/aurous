@@ -18,6 +18,15 @@ const excludedDirectories = new Set([
   'out',
   'target',
   'vendor',
+  '.trash',
+  '.cache',
+  'cache',
+  'caches',
+  'library',
+  '.config',
+  '.ssh',
+  '.aws',
+  '.gnupg',
 ]);
 const excludedFileNames = new Set([
   '.mcp.json',
@@ -228,7 +237,7 @@ async function walk(root: string, skipped: string[]): Promise<string[]> {
       if (entry.isSymbolicLink()) {
         skipped.push(`${relative} (symbolic link)`);
       } else if (entry.isDirectory()) {
-        if (excludedDirectories.has(entry.name.toLowerCase()))
+        if (entry.name.startsWith('.') || excludedDirectories.has(entry.name.toLowerCase()))
           skipped.push(`${relative}/ (excluded directory)`);
         else await visit(candidate);
       } else if (entry.isFile()) {

@@ -2,6 +2,7 @@ import type { AurousPlan } from '../../domain/schemas.js';
 import type { ProductivityAdapter } from './types.js';
 import type { DestinationCandidate, ResolvedDestination } from '../../domain/destinations.js';
 import type { PlanProposal } from '../../domain/schemas.js';
+import { canonicalExactObject, exactBindingWarnings } from './exact-bindings.js';
 
 export class NotionAdapter implements ProductivityAdapter {
   readonly name = 'notion' as const;
@@ -54,9 +55,7 @@ function bindExactDestination(
   return {
     ...proposal,
     plannedActions: proposal.plannedActions.map((action) => {
-      const existing = destination.existingObjects.find(
-        (object) => object.name === action.target && object.type === action.objectType,
-      );
+      const existing = canonicalExactObject(destination, action);
       const properties = action.properties.filter(
         (property) =>
           property.key !== propertyKey &&
@@ -82,6 +81,12 @@ function bindExactDestination(
     assumptions: [
       ...proposal.assumptions,
       `The exact verified destination is ${destination.name}; its internal ID is embedded in every action.`,
+    ],
+    warnings: [
+      ...new Set([
+        ...proposal.warnings,
+        ...exactBindingWarnings(destination, proposal.plannedActions),
+      ]),
     ],
   };
 }

@@ -8,6 +8,8 @@ import { MockAgentAdapter } from '../src/adapters/agents/mock.js';
 import type { Output } from '../src/core/output.js';
 import { LocalRunStore } from '../src/core/run-store.js';
 import { AurousServices } from '../src/core/services.js';
+import type { DestinationDiscovery } from '../src/domain/destinations.js';
+import type { PlanProposal } from '../src/domain/schemas.js';
 
 function captureOutput(): { output: Output; lines: string[] } {
   const lines: string[] = [];
@@ -27,6 +29,7 @@ function captureOutput(): { output: Output; lines: string[] } {
 async function fixture() {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-service-'));
   await writeFile(path.join(workspace, 'README.md'), '# Example\n');
+  await writeFile(path.join(workspace, 'package.json'), '{"name":"example"}\n');
   const capture = captureOutput();
   const store = new LocalRunStore(workspace);
   const services = new AurousServices({ workspace, store, output: capture.output });
@@ -279,4 +282,177 @@ describe('AurousServices mock flow', () => {
     ).rejects.toMatchObject({ code: 'AUR-PLAN-005' });
     expect((await store.listRuns())[0]?.status).toBe('failed');
   });
+
+  it('uses natural-language Linear planning and retains README and submission intent', async () => {
+    const { workspace, store, capture } = await fixture();
+    const objective =
+      'Add final Build Week launch work. Create two issues only: one for completing the README and one for preparing the Devpost submission materials before July 21.';
+    const discovery: DestinationDiscovery = {
+      integration: 'linear',
+      candidates: [
+        {
+          id: 'team-exact',
+          name: 'Product',
+          kind: 'team',
+          description: 'Product team',
+          existingAurousMatch: true,
+        },
+      ],
+      existingObjects: [
+        {
+          id: 'project-exact',
+          name: 'Aurous — Build Week Launch',
+          type: 'project',
+          destinationId: 'team-exact',
+        },
+      ],
+      inspectedAt: '2026-07-19T12:00:00.000Z',
+      warnings: ['Existing duplicate demo issues will remain untouched.'],
+    };
+    const proposal: PlanProposal = {
+      proposedWorkspaceStructure: [
+        { kind: 'issue', name: 'Complete the README', purpose: 'Complete the README.' },
+        {
+          kind: 'issue',
+          name: 'Prepare Devpost submission materials',
+          purpose: 'Prepare the Devpost submission materials.',
+        },
+      ],
+      plannedActions: [
+        linearIssue('action-001', 'Complete the README', 'Complete the README before launch.'),
+        linearIssue(
+          'action-002',
+          'Prepare Devpost submission materials',
+          'Prepare the Devpost submission materials before July 21.',
+        ),
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'Two issues covering the README and Devpost submission materials.',
+    };
+    const agent = planningAgent(discovery, proposal);
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => agent,
+    });
+
+    const plan = await services.plan({
+      agent: 'mock',
+      tool: 'linear',
+      contextPaths: ['.'],
+      objective,
+    });
+
+    expect(plan.plannedActions.map((action) => action.target)).toEqual([
+      'Complete the README',
+      'Prepare Devpost submission materials',
+    ]);
+    expect(plan.plannedActions).toHaveLength(2);
+    expect(
+      plan.plannedActions.every((action) =>
+        action.properties.some(
+          (property) => property.key === 'linear.projectId' && property.value === 'project-exact',
+        ),
+      ),
+    ).toBe(true);
+    expect(plan.assumptions.join('\n')).toContain('no preset was inferred');
+    expect(plan.warnings).toContain('Existing duplicate demo issues will remain untouched.');
+  });
+
+  it('rejects an update action without an inspected exact external ID', async () => {
+    const { workspace, store, capture } = await fixture();
+    const discovery: DestinationDiscovery = {
+      integration: 'linear',
+      candidates: [
+        {
+          id: 'team-exact',
+          name: 'Product',
+          kind: 'team',
+          description: 'Product team',
+          existingAurousMatch: false,
+        },
+      ],
+      existingObjects: [],
+      inspectedAt: '2026-07-19T12:00:00.000Z',
+      warnings: [],
+    };
+    const proposal: PlanProposal = {
+      proposedWorkspaceStructure: [
+        { kind: 'issue', name: 'Unknown existing issue', purpose: 'Update it.' },
+      ],
+      plannedActions: [
+        {
+          ...linearIssue('action-001', 'Unknown existing issue', 'Update the existing issue.'),
+          operation: 'update',
+        },
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'The issue is updated.',
+    };
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => planningAgent(discovery, proposal),
+    });
+
+    await expect(
+      services.plan({
+        agent: 'mock',
+        tool: 'linear',
+        contextPaths: ['.'],
+        objective: 'Update the existing issue',
+      }),
+    ).rejects.toMatchObject({
+      code: 'AUR-PLAN-009',
+    });
+  });
 });
+
+function linearIssue(id: string, target: string, description: string) {
+  return {
+    id,
+    operation: 'create' as const,
+    objectType: 'issue',
+    target,
+    description,
+    properties: [
+      { key: 'linear.project', value: 'Aurous — Build Week Launch' },
+      { key: 'linear.priority', value: '2' },
+    ],
+    dependsOn: [],
+  };
+}
+
+function planningAgent(discovery: DestinationDiscovery, proposal: PlanProposal): AgentAdapter {
+  const mock = new MockAgentAdapter();
+  return {
+    name: 'mock',
+    diagnose: () => mock.diagnose(),
+    discoverDestinations: () =>
+      Promise.resolve({
+        value: discovery,
+        command: ['test-discovery'],
+        stdout: JSON.stringify(discovery),
+        stderr: '',
+        durationMs: 1,
+      }),
+    generatePlan: () =>
+      Promise.resolve({
+        value: proposal,
+        command: ['test-plan'],
+        stdout: JSON.stringify(proposal),
+        stderr: '',
+        durationMs: 1,
+      }),
+    executePlan: (input) => mock.executePlan(input),
+    inspectRecovery: (input) => mock.inspectRecovery(input),
+    executeRecoveryAction: (input) => mock.executeRecoveryAction(input),
+    manualFallback: (directory, phase, prompt) => mock.manualFallback(directory, phase, prompt),
+  };
+}

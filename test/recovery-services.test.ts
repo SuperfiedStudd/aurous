@@ -32,6 +32,7 @@ function captureOutput(): { output: Output; lines: string[] } {
 async function fixture() {
   const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-recovery-service-'));
   await writeFile(path.join(workspace, 'README.md'), '# Recovery fixture\n');
+  await writeFile(path.join(workspace, 'package.json'), '{"name":"recovery-fixture"}\n');
   const store = new LocalRunStore(workspace);
   const capture = captureOutput();
   const services = new AurousServices({ workspace, store, output: capture.output });

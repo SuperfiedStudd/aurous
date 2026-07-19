@@ -167,6 +167,7 @@ function resolved(
     existingObjects: discovery.existingObjects.filter(
       (object) => object.destinationId === candidate.id,
     ),
+    discoveryWarnings: discovery.warnings,
   });
 }
 

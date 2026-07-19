@@ -57,11 +57,18 @@ export function formatPlan(plan: AurousPlan, options: RenderOptions = {}): strin
       `  ${action.description}`,
     );
     let exactReuseShown = false;
+    const exactRelationshipsShown = new Set<string>();
     for (const property of action.properties) {
       if (!options.verbose && isHiddenDestinationProperty(property.key)) {
         if (property.key.endsWith('.dedupe.knownExternalId') && !exactReuseShown) {
           previewLines.push('  reuse: exact existing object verified during read-only inspection');
           exactReuseShown = true;
+        } else {
+          const relation = property.key.match(/^linear\.(project|milestone|label)Ids?$/)?.[1];
+          if (relation && !exactRelationshipsShown.has(relation)) {
+            previewLines.push(`  ${relation}: exact existing relationship verified by ID`);
+            exactRelationshipsShown.add(relation);
+          }
         }
         continue;
       }
@@ -89,6 +96,10 @@ function isHiddenDestinationProperty(key: string): boolean {
   return (
     key === 'notion.destination.parentPageId' ||
     key === 'linear.teamId' ||
+    key === 'linear.projectId' ||
+    key === 'linear.milestoneId' ||
+    key === 'linear.labelIds' ||
+    key === 'linear.dedupe.identitySource' ||
     key === 'mock.workspaceId' ||
     key.endsWith('.dedupe.knownExternalId') ||
     key.endsWith('.dedupe.knownUrl')
