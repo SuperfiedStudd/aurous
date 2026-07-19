@@ -1,0 +1,12 @@
+[
+  {
+    "path": "$.objects[3].views[0].filterState",
+    "expected": "advanced filter is an and group containing zero filters.",
+    "actual": "no filters; exposed advanced filter is an empty and group."
+  },
+  {
+    "path": "$.objects[3].views[1].filterState",
+    "expected": "advanced filter is an and group containing zero filters.",
+    "actual": "no filters; exposed advanced filter is an empty and group."
+  }
+]

@@ -182,6 +182,11 @@ const emptyFilterDescriptions = new Set([
   'empty and filter group',
   'empty and filter group (0 filters)',
   'no filters (empty and filter group)',
+  'advanced filter is an and group containing zero filters',
+  'no filters; exposed advanced filter is an empty and group',
+  'and group containing zero filters',
+  'advanced filter contains zero filters',
+  'empty advanced filter group',
   '0 filters',
   'clear filter',
 ]);
