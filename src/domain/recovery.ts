@@ -160,17 +160,46 @@ function normalizeInspectionProperties(
 function normalizeFilterState(summary: string | null | undefined): string | null {
   if (!summary) return null;
   const normalized = summary.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
-  // Empty filters have several MCP/agent renderings but are semantically alike.
-  if (
-    /(?:no active filters|empty (?:and )?filter|0 filters|no filters|clear filter)/.test(normalized)
-  ) {
-    return null;
-  }
+  if (!normalized) return null;
+  const description = normalized.replace(/\.$/, '');
+  // Only known whole-description renderings are treated as empty. Real filter
+  // expressions, including ones containing these words as values, stay material.
+  if (emptyFilterDescriptions.has(description)) return null;
   // Free-form statements that say the filter was not exposed are not reliable
   // filter state and must not block a previously reviewed recovery.
-  if (/(?:not exposed|not available|unavailable|unknown)/.test(normalized)) return null;
+  if (unavailableFilterDescriptions.has(description)) return null;
   return normalized;
 }
+
+const emptyFilterDescriptions = new Set([
+  'no filter configured',
+  'no filters configured',
+  'no active filters',
+  'no active filters; empty and group',
+  'no filter',
+  'no filters',
+  'empty filter',
+  'empty and filter group',
+  'empty and filter group (0 filters)',
+  'no filters (empty and filter group)',
+  '0 filters',
+  'clear filter',
+]);
+
+const unavailableFilterDescriptions = new Set([
+  'not exposed',
+  'not available',
+  'unavailable',
+  'unknown',
+  'filter not exposed',
+  'filter not available',
+  'filter unavailable',
+  'filter unknown',
+  'filter configuration not exposed',
+  'filter configuration not available',
+  'filter state not exposed',
+  'filter state not available',
+]);
 
 function compareJson(left: unknown, right: unknown): number {
   return JSON.stringify(left).localeCompare(JSON.stringify(right));
