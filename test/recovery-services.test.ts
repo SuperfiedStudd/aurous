@@ -464,6 +464,87 @@ describe('AurousServices recovery flow', () => {
     ).toBe(false);
   });
 
+  it('records the captured failed update with ambiguousWrite false and zero created objects', async () => {
+    const { workspace, store, capture, originalRunId } = await capturedActionFixture();
+    const captured = JSON.parse(
+      await readFile(
+        new URL('./fixtures/recovery-action-003-no-write.json', import.meta.url),
+        'utf8',
+      ),
+    ) as ExecutionResult;
+    const executedActionIds: string[] = [];
+    const adapter = agentWith({
+      executeRecoveryAction: (input) => {
+        executedActionIds.push(input.action.id);
+        return Promise.resolve({
+          value: captured,
+          command: ['captured-codex-recovery-apply'],
+          stdout: JSON.stringify(captured),
+          stderr: 'user cancelled MCP tool call',
+          durationMs: 1,
+        });
+      },
+    });
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => adapter,
+    });
+    const recovery = await services.recover(originalRunId);
+
+    const result = await services.applyRecovery(recovery.recoveryRunId, {
+      confirm: () => Promise.resolve(true),
+    });
+
+    expect(executedActionIds).toEqual(['action-003']);
+    expect(result).toMatchObject({
+      status: 'partial',
+      summary: 'Recovery action action-003 failed without an external write checkpoint.',
+      createdObjects: [],
+      completedActionIds: [],
+      failures: [{ actionId: 'action-003', code: 'AUR-MCP-001' }],
+    });
+    expect(capture.lines.join('\n')).toContain('Created objects: 0');
+    expect(await store.readRecoveryCheckpoints(recovery.recoveryRunId)).not.toContainEqual(
+      expect.objectContaining({ actionId: 'action-003', source: 'action-result' }),
+    );
+    const event = (await store.readEvents(recovery.recoveryRunId)).find(
+      (candidate) => candidate.code === 'AUR-RECOVERY-104',
+    );
+    expect(event).toMatchObject({
+      summary: 'Recovery action action-003 recorded.',
+      metadata: { ambiguousWrite: false, checkpointedObjectCount: 0 },
+    });
+  });
+
+  it('checkpoints successful exact-ID updates without reporting them as creates', async () => {
+    const { workspace, store, capture, originalRunId } = await capturedActionFixture();
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => agentWith(),
+    });
+    const recovery = await services.recover(originalRunId);
+
+    const result = await services.applyRecovery(recovery.recoveryRunId, {
+      confirm: () => Promise.resolve(true),
+    });
+
+    expect(result).toMatchObject({
+      status: 'succeeded',
+      completedActionIds: ['action-003', 'action-004'],
+      createdObjects: [],
+    });
+    expect(capture.lines.join('\n')).toContain('Created objects: 0');
+    expect(
+      (await store.readRecoveryCheckpoints(recovery.recoveryRunId)).filter(
+        (checkpoint) => checkpoint.source === 'action-result',
+      ),
+    ).toHaveLength(2);
+  });
+
   it('contains the captured action-003 malformed code without retrying an ambiguous write', async () => {
     const { workspace, store, capture, originalRunId } = await capturedActionFixture();
     const captured = JSON.parse(
@@ -504,6 +585,7 @@ describe('AurousServices recovery flow', () => {
     expect(executedActionIds).toEqual(['action-003']);
     expect(result).toMatchObject({
       status: 'partial',
+      createdObjects: [],
       completedActionIds: [],
       failures: [{ actionId: 'action-003', code: 'AUR-AGENT-005' }],
     });
@@ -536,6 +618,11 @@ describe('AurousServices recovery flow', () => {
         source: 'action-result',
       }),
     );
+    expect(
+      (await store.readEvents(recovery.recoveryRunId)).find(
+        (event) => event.code === 'AUR-RECOVERY-104',
+      ),
+    ).toMatchObject({ metadata: { ambiguousWrite: true, checkpointedObjectCount: 1 } });
     const log = await readFile(
       path.join(
         store.runDirectory(recovery.recoveryRunId),

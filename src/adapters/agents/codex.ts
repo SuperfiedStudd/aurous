@@ -220,18 +220,12 @@ export class CodexAgentAdapter implements AgentAdapter {
       encoding: 'utf8',
       mode: 0o600,
     });
-    const args = [
-      'exec',
-      '--skip-git-repo-check',
-      '--ephemeral',
-      '--sandbox',
-      'read-only',
-      '--output-schema',
+    const args = buildCodexInvocationArgs(
+      phase,
       schemaPath,
-      '--output-last-message',
       outputPath,
-      '-',
-    ];
+      'recoveryPlan' in input ? input.recoveryPlan.tool : undefined,
+    );
     const started = Date.now();
     let result;
     try {
@@ -317,6 +311,24 @@ export class CodexAgentAdapter implements AgentAdapter {
   }
 }
 
+export function buildCodexInvocationArgs(
+  phase: AgentPhase,
+  schemaPath: string,
+  outputPath: string,
+  recoveryTool?: 'notion' | 'linear' | 'mock',
+): string[] {
+  const args = ['exec', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only'];
+  if (phase === 'recover-apply' && recoveryTool && recoveryTool !== 'mock') {
+    args.push(
+      '--strict-config',
+      '--config',
+      `mcp_servers.${recoveryTool}.default_tools_approval_mode="approve"`,
+    );
+  }
+  args.push('--output-schema', schemaPath, '--output-last-message', outputPath, '-');
+  return args;
+}
+
 async function normalizeExecutionInvocation(
   invocation: InvocationRecord<ParsedExecutionResult>,
   runDirectory: string,
@@ -351,11 +363,13 @@ function invocationRunId(
 }
 
 const requiredCodexFlags = [
+  '--config',
   '--output-schema',
   '--output-last-message',
   '--ephemeral',
   '--skip-git-repo-check',
   '--sandbox',
+  '--strict-config',
 ];
 
 function mcpReadiness(

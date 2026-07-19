@@ -1,0 +1,27 @@
+{
+  "status": "failed",
+  "summary": "The target database was verified, but the approved update was not executed because the Notion MCP write call was cancelled.",
+  "createdObjects": [
+    {
+      "actionId": "action-003",
+      "type": "database",
+      "name": "Milestone Tracker",
+      "externalId": "7f965334-0f81-4d4c-966b-6b3d9d969fa2",
+      "url": "https://app.notion.com/p/7f9653340f814d4c966b6b3d9d969fa2"
+    }
+  ],
+  "completedActionIds": [],
+  "warnings": [],
+  "failures": [
+    {
+      "actionId": "action-003",
+      "code": "AUR-MCP-001",
+      "summary": "Notion update was not executed.",
+      "probableCause": "The user cancelled the Notion MCP write call.",
+      "nextAction": "Retry action-003 and approve the Notion MCP update call.",
+      "severity": "recoverable"
+    }
+  ],
+  "startedAt": "2026-07-19T04:44:06.505Z",
+  "finishedAt": "2026-07-19T04:44:06.505Z"
+}
