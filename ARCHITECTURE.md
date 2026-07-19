@@ -22,10 +22,10 @@ explicit paths -> guarded context ingestion -> context preview
 
 ## Modules
 
-- `src/cli.ts` defines the six user commands and terminal confirmation.
+- `src/cli.ts` defines the seven user commands and terminal confirmation.
 - `src/core/context.ts` is the path allowlist and context budget boundary.
-- `src/domain/schemas.ts` defines versioned Zod contracts for plans, results, runs, and diagnostics.
-- `src/core/services.ts` owns plan/apply state transitions and scope validation.
+- `src/domain/schemas.ts` and `src/domain/recovery.ts` define versioned Zod contracts for plans, results, runs, diagnostics, exact-ID inspection, recovery classifications, and checkpoints.
+- `src/core/services.ts` owns plan/apply/recovery state transitions and scope validation.
 - `src/core/run-store.ts` implements the `RunStore` interface with atomic, permission-restricted local JSON files. A future shared-state implementation can satisfy this interface without changing command orchestration.
 - `src/adapters/agents/` contains the shared `AgentAdapter` contract and Codex, Claude Code, and mock implementations.
 - `src/adapters/productivity/` keeps Notion- and Linear-native planning/execution guidance separate.
@@ -39,6 +39,8 @@ run.json                    lifecycle metadata
 context.json                approved summary and selected content
 plan.json                   immutable validated plan
 result.json                 apply outcome, object references, warnings, failures
+recovery-plan.json          exact-ID classifications and separately approvable actions
+recovery-checkpoints.jsonl  append-only external IDs from inspection and each action result
 events.jsonl                redacted timestamped diagnostic events
 logs/*.json                 redacted stdout/stderr captures
 *-response-schema.json      structured local-agent response contract
@@ -55,6 +57,16 @@ Codex transport schemas use the strict Structured Outputs subset: every object i
 
 Apply loads `plan.json`; it never regenerates the plan. Approved action IDs are an allowlist. The result is rejected if it references any unknown action ID. Adapter prompts prohibit discovery and scope expansion, and failures become a saved `result.json` plus stable `AUR-*` events.
 
+## Partial-run recovery contract
+
+`recover <partial-run-id>` is read-only. It requires a persisted partial or failed result with external IDs, fetches only those exact IDs, and classifies every original action as completed, partially completed, pending, blocked, or drifted. Same-name discovery is forbidden. Verified completed work is skipped; a partially created page or database becomes an update against its persisted external ID. Attempted work without an ID is blocked because replay could duplicate an object.
+
+Recovery capability decisions are saved as part of a separate immutable approval boundary. In particular, when the Notion MCP cannot define custom Status options but can define explicit Select options, the recovery plan rewrites approved Status schemas to Select and discloses the loss of Status groups and Status-specific semantics. Existing filtered views are blocked when the inspected MCP cannot repair their filters. Recovery never schedules deletion.
+
+`recover <recovery-run-id> --apply` prints the complete saved recovery plan and requires the exact typed phrase shown by the CLI; there is no noninteractive confirmation flag. After confirmation, Aurous performs another read-only exact-ID inspection and rejects any drift before writing. Execution uses one agent invocation per action. Each returned external ID is appended to `recovery-checkpoints.jsonl` before the next action, the cumulative result is replaced after each action, and any partial, cancelled, invalid, or ambiguous result stops subsequent work. A recovery execution plan is also persisted so a safely checkpointed partial recovery can itself be reconciled without replaying completed actions.
+
+No local checkpoint can make an external MCP write transactional. If the agent process exits after a remote write but before returning the ID, Aurous marks the attempt partial and ambiguous, refuses to replay that recovery run, and requires fresh exact-state inspection.
+
 ## Adapter matrix
 
 | Agent       | Notion    | Linear    | Noninteractive strategy                               |
@@ -67,7 +79,7 @@ The productivity adapter supplies tool-native structure while the agent adapter 
 
 ## Error model
 
-Errors carry a stable code, severity, summary, probable cause, and next action. Categories currently include `AUR-CTX`, `AUR-STATE`, `AUR-PLAN`, `AUR-AGENT`, `AUR-MCP`, `AUR-APPLY`, `AUR-TOOL`, and `AUR-CORE`. Diagnostics are safe to paste back into Codex after redaction, but users should still review output before sharing it.
+Errors carry a stable code, severity, summary, probable cause, and next action. Categories currently include `AUR-CTX`, `AUR-STATE`, `AUR-PLAN`, `AUR-AGENT`, `AUR-MCP`, `AUR-APPLY`, `AUR-RECOVERY`, `AUR-TOOL`, and `AUR-CORE`. Diagnostics are safe to paste back into Codex after redaction, but users should still review output before sharing it.
 
 ## Security invariants
 

@@ -80,6 +80,8 @@ describe('AurousServices mock flow', () => {
       name: 'mock',
       diagnose: () => new MockAgentAdapter().diagnose(),
       generatePlan: (input) => new MockAgentAdapter().generatePlan(input),
+      inspectRecovery: (input) => new MockAgentAdapter().inspectRecovery(input),
+      executeRecoveryAction: (input) => new MockAgentAdapter().executeRecoveryAction(input),
       manualFallback: (directory, phase, prompt) =>
         new MockAgentAdapter().manualFallback(directory, phase, prompt),
       executePlan: () =>
@@ -126,6 +128,8 @@ describe('AurousServices mock flow', () => {
       name: 'mock',
       diagnose: () => mock.diagnose(),
       generatePlan: (input) => mock.generatePlan(input),
+      inspectRecovery: (inspectionInput) => mock.inspectRecovery(inspectionInput),
+      executeRecoveryAction: (executionInput) => mock.executeRecoveryAction(executionInput),
       manualFallback: (directory, phase, prompt) => mock.manualFallback(directory, phase, prompt),
       executePlan: () =>
         Promise.reject(
@@ -157,6 +161,7 @@ describe('AurousServices mock flow', () => {
       code: 'AUR-AGENT-007',
       severity: 'recoverable',
     });
+    expect(capture.lines.join('\n')).toContain('Agent invocation cancelled: plan apply');
     expect((await store.getRun(plan.runId)).status).toBe('cancelled');
     expect((await store.loadResult(plan.runId))?.status).toBe('cancelled');
     const failedLog = await readFile(
@@ -172,5 +177,47 @@ describe('AurousServices mock flow', () => {
     expect(diagnostic).toContain('Agent terminal error (redacted)');
     expect(diagnostic).toContain('schema rejected');
     expect(diagnostic).not.toContain('embedded project prompt should stay hidden');
+  });
+
+  it('reports an agent timeout distinctly from a generic failure', async () => {
+    const { store, workspace, capture } = await fixture();
+    const mock = new MockAgentAdapter();
+    const timedOutAgent: AgentAdapter = {
+      name: 'mock',
+      diagnose: () => mock.diagnose(),
+      generatePlan: (input) => mock.generatePlan(input),
+      inspectRecovery: (inspectionInput) => mock.inspectRecovery(inspectionInput),
+      executeRecoveryAction: (executionInput) => mock.executeRecoveryAction(executionInput),
+      manualFallback: (directory, phase, prompt) => mock.manualFallback(directory, phase, prompt),
+      executePlan: () =>
+        Promise.reject(
+          commandFailure(
+            'Mock agent',
+            'apply',
+            ['mock', 'apply'],
+            '',
+            'deadline exceeded',
+            true,
+            false,
+            300_000,
+          ),
+        ),
+    };
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => timedOutAgent,
+    });
+    const plan = await services.plan({
+      agent: 'mock',
+      tool: 'notion',
+      contextPaths: ['.'],
+      objective: 'Test timeout progress',
+    });
+    await expect(services.apply(plan.runId, { confirmed: true })).rejects.toMatchObject({
+      code: 'AUR-AGENT-003',
+    });
+    expect(capture.lines.join('\n')).toContain('Agent invocation timed out: plan apply');
   });
 });

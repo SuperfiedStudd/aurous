@@ -4,6 +4,8 @@ import type {
   AgentDiagnostic,
   PlanExecutionInput,
   PlanGenerationInput,
+  RecoveryActionExecutionInput,
+  RecoveryInspectionInput,
 } from './types.js';
 import { writeManualPrompt } from './helpers.js';
 
@@ -68,7 +70,95 @@ export class MockAgentAdapter implements AgentAdapter {
     });
   }
 
-  manualFallback(runDirectory: string, phase: 'plan' | 'apply', prompt: string): Promise<string> {
+  inspectRecovery(input: RecoveryInspectionInput) {
+    const started = Date.now();
+    const recordedByTarget = new Map(
+      input.originalResult.createdObjects.map((object) => [object.name, object]),
+    );
+    const value = {
+      objects: input.originalResult.createdObjects.map((object) => {
+        const action = input.originalPlan.plannedActions.find(
+          (candidate) => candidate.id === object.actionId,
+        );
+        const parentName = action?.properties.find(
+          (property) => property.key === 'notion.parent',
+        )?.value;
+        return {
+          actionId: object.actionId,
+          externalId: object.externalId ?? `mock-${object.actionId}`,
+          url:
+            object.url ??
+            `https://mock.aurous.local/${input.originalPlan.runId}/${object.actionId}`,
+          found: true,
+          objectType: action?.objectType ?? object.type,
+          title: action?.target ?? object.name,
+          parentId: parentName ? (recordedByTarget.get(parentName)?.externalId ?? null) : null,
+          properties: [],
+          views: [],
+          recordCount: 0,
+          limitations: ['Mock inspection simulates exact-ID verification.'],
+        };
+      }),
+      customStatusOptions: {
+        supported: false,
+        evidence: 'Mock recovery simulates an MCP without custom Status option support.',
+      },
+      customSelectOptions: {
+        supported: true,
+        evidence: 'Mock recovery simulates explicit Select option support.',
+      },
+      updateViewFilters: {
+        supported: true,
+        evidence: 'Mock recovery simulates view-filter updates.',
+      },
+      warnings: ['Mock mode made no external reads.'],
+    };
+    return Promise.resolve({
+      value,
+      command: ['aurous-internal-mock', 'recover-inspect'],
+      stdout: JSON.stringify(value),
+      stderr: '',
+      durationMs: Date.now() - started,
+    });
+  }
+
+  executeRecoveryAction(input: RecoveryActionExecutionInput) {
+    const started = new Date();
+    const externalId =
+      input.action.properties.find((property) => property.key === 'notion.recovery.externalId')
+        ?.value ?? `mock-${input.action.id}`;
+    const value = {
+      status: 'succeeded' as const,
+      summary: `Mock recovery completed ${input.action.id}.`,
+      createdObjects: [
+        {
+          actionId: input.action.id,
+          type: input.action.objectType,
+          name: input.action.target,
+          externalId,
+          url: `https://mock.aurous.local/${input.recoveryPlan.recoveryRunId}/${input.action.id}`,
+        },
+      ],
+      completedActionIds: [input.action.id],
+      warnings: ['Mock mode made no external writes.'],
+      failures: [],
+      startedAt: started.toISOString(),
+      finishedAt: new Date().toISOString(),
+    };
+    return Promise.resolve({
+      value,
+      command: ['aurous-internal-mock', 'recover-apply'],
+      stdout: JSON.stringify(value),
+      stderr: '',
+      durationMs: Date.now() - started.getTime(),
+    });
+  }
+
+  manualFallback(
+    runDirectory: string,
+    phase: 'plan' | 'apply' | 'recover-inspect' | 'recover-apply',
+    prompt: string,
+  ): Promise<string> {
     return writeManualPrompt(runDirectory, phase, prompt);
   }
 }

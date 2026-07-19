@@ -248,6 +248,9 @@ export const ExecutionResultResponseSchema = z
 export const RunStatusSchema = z.enum([
   'planning',
   'planned',
+  'reconciling',
+  'recovery-planned',
+  'recovering',
   'applying',
   'succeeded',
   'partial',
@@ -265,6 +268,8 @@ export const RunRecordSchema = z.object({
   tool: ToolNameSchema,
   objective: z.string(),
   approvedContextPaths: z.array(z.string()),
+  runKind: z.enum(['standard', 'recovery']).default('standard'),
+  recoveryOf: z.string().optional(),
 });
 export type RunRecord = z.infer<typeof RunRecordSchema>;
 

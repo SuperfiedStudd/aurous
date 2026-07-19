@@ -1,5 +1,6 @@
 import type { AurousError } from './errors.js';
 import type { AurousPlan, ContextSummary, ExecutionResult, RunRecord } from '../domain/schemas.js';
+import type { RecoveryPlan } from '../domain/recovery.js';
 
 export interface Output {
   log(message?: string): void;
@@ -72,8 +73,48 @@ export function formatExecutionResult(result: ExecutionResult): string {
   return lines.join('\n');
 }
 
+export function formatRecoveryPlan(plan: RecoveryPlan): string {
+  const lines = [
+    `Recovery plan ${plan.recoveryRunId}`,
+    `  Original run: ${plan.originalRunId}`,
+    `  Agent/tool: ${plan.agent} + ${plan.tool}`,
+    `  Executable: ${plan.isExecutable ? 'yes' : 'no'}`,
+    '',
+    'Exact-ID classifications:',
+    ...plan.classifications.map(
+      (item) =>
+        `  ${item.actionId}  ${item.status} / ${item.recoveryOperation}${item.externalId ? `  id=${item.externalId}` : ''}\n    ${item.evidence}`,
+    ),
+  ];
+  if (plan.compatibilityDecisions.length > 0) {
+    lines.push('', 'Compatibility decisions:');
+    for (const decision of plan.compatibilityDecisions) {
+      lines.push(
+        `  ! ${decision.property}: ${decision.approvedType} -> ${decision.recoveryType}`,
+        `    ${decision.reason}`,
+      );
+      for (const consequence of decision.consequences) lines.push(`    - ${consequence}`);
+    }
+  }
+  lines.push('', 'Exact recovery actions:');
+  if (plan.plannedActions.length === 0) lines.push('  (none)');
+  for (const action of plan.plannedActions) {
+    const externalId = action.properties.find(
+      (property) => property.key === 'notion.recovery.externalId',
+    )?.value;
+    lines.push(
+      `  ${action.id}  ${action.operation} ${action.objectType} "${action.target}"${externalId ? `  exact-id=${externalId}` : ''}`,
+    );
+  }
+  lines.push('', 'Destructive actions: none');
+  if (plan.warnings.length > 0)
+    lines.push('', 'Warnings:', ...plan.warnings.map((warning) => `  ! ${warning}`));
+  return lines.join('\n');
+}
+
 export function formatRun(record: RunRecord): string {
-  return `${record.runId}  ${record.status.padEnd(10)}  ${record.agent}+${record.tool}  ${record.updatedAt}  ${record.objective}`;
+  const linkage = record.recoveryOf ? `  recovers=${record.recoveryOf}` : '';
+  return `${record.runId}  ${record.status.padEnd(16)}  ${record.agent}+${record.tool}  ${record.updatedAt}${linkage}  ${record.objective}`;
 }
 
 export function formatError(error: AurousError): string {

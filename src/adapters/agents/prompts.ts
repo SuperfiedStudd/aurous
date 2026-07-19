@@ -1,5 +1,12 @@
-import type { AurousPlan, ContextBundle } from '../../domain/schemas.js';
+import type {
+  AurousPlan,
+  ContextBundle,
+  CreatedObject,
+  ExecutionResult,
+  PlanAction,
+} from '../../domain/schemas.js';
 import type { ProductivityAdapter } from '../productivity/types.js';
+import type { RecoveryPlan } from '../../domain/recovery.js';
 
 export function buildPlanningPrompt(
   objective: string,
@@ -56,4 +63,81 @@ ${productivity.executionInstructions(plan)}
 
 APPROVED PLAN (immutable):
 ${JSON.stringify(plan, null, 2)}`;
+}
+
+export function buildRecoveryInspectionPrompt(plan: AurousPlan, result: ExecutionResult): string {
+  const objects = result.createdObjects.map((object) => ({
+    actionId: object.actionId,
+    externalId: object.externalId,
+    url: object.url,
+    expectedType: plan.plannedActions.find((action) => action.id === object.actionId)?.objectType,
+    expectedTitle: plan.plannedActions.find((action) => action.id === object.actionId)?.target,
+  }));
+  return `Perform a strictly read-only recovery inspection through the configured official ${plan.tool} MCP and return only JSON matching the supplied schema.
+
+SAFETY RULES:
+- Fetch only the recorded external IDs below. Never verify or reuse an object by matching its name.
+- Do not search for substitutes or same-name objects.
+- Do not create, update, rename, move, delete, configure, or otherwise mutate anything.
+- Set found=true only when the exact external ID was fetched successfully.
+- Report exact title, type, parent external ID, property types/options, visible views/filters, and record count when exposed.
+- Inspect available MCP tool definitions without invoking write tools. Report whether custom Status options, custom Select options, and existing view filters can be updated.
+- If a field is not exposed, use null or an empty array and explain the limitation.
+
+Original run: ${plan.runId}
+Recorded objects:
+${JSON.stringify(objects, null, 2)}`;
+}
+
+export function buildRecoveryActionPrompt(
+  recoveryPlan: RecoveryPlan,
+  action: PlanAction,
+  knownObjects: CreatedObject[],
+  productivity: ProductivityAdapter,
+): string {
+  return `Execute exactly one explicitly approved recovery action through the configured ${recoveryPlan.tool} MCP and return only JSON matching the supplied execution schema.
+
+RECOVERY SAFETY RULES:
+- Execute only the single action below. Never expand scope.
+- Never delete an object.
+- Never infer identity from a name. Existing objects may be reused or updated only by an exact external ID in the action or known-object list.
+- Before updating an existing object, fetch that exact ID and verify its expected title, type, and parent. If verification fails, perform no write and report AUR-RECOVERY-011.
+- If notion.recovery.mode is update-existing, do not create any page or database for that action.
+- For a create action, create only the approved target. If the tool result does not expose its ID and URL, report a partial failure instead of claiming completion.
+- Preserve the Status-to-Select compatibility decision exactly. Do not fall back to Notion Status or default options.
+- Report created or verified external objects immediately in createdObjects using this action ID.
+- completedActionIds may contain only this action ID.
+- Do not execute dependent or subsequent actions.
+
+Tool guidance:
+${productivity.executionInstructions({
+  schemaVersion: 1,
+  runId: recoveryPlan.recoveryRunId,
+  createdAt: recoveryPlan.createdAt,
+  agent: recoveryPlan.agent,
+  tool: recoveryPlan.tool,
+  objective: recoveryPlan.objective,
+  contextSummary: {
+    approvedPaths: ['recovery-plan-only'],
+    files: [],
+    fileCount: 0,
+    totalBytes: 0,
+    skipped: [],
+  },
+  proposedWorkspaceStructure: [
+    { kind: action.objectType, name: action.target, purpose: action.description },
+  ],
+  plannedActions: [action],
+  assumptions: [],
+  warnings: recoveryPlan.warnings,
+  destructiveActions: [],
+  expectedResult: recoveryPlan.expectedResult,
+})}
+
+Recovery linkage: ${recoveryPlan.recoveryRunId} recovers ${recoveryPlan.originalRunId}
+Known exact external objects:
+${JSON.stringify(knownObjects, null, 2)}
+
+SINGLE APPROVED RECOVERY ACTION:
+${JSON.stringify(action, null, 2)}`;
 }
