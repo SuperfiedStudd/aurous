@@ -3,7 +3,12 @@ import path from 'node:path';
 import { execa } from 'execa';
 import { AurousError } from '../../core/errors.js';
 import { redactText } from '../../core/redact.js';
-import { ExecutionResultResponseSchema, PlanProposalResponseSchema } from '../../domain/schemas.js';
+import {
+  PlanProposalResponseSchema,
+  parseExecutionResultResponse,
+  type ExecutionResult,
+  type ParsedExecutionResult,
+} from '../../domain/schemas.js';
 import { executionResultJsonSchema, planProposalJsonSchema } from '../../domain/json-schemas.js';
 import { RecoveryInspectionSchema } from '../../domain/recovery.js';
 import { recoveryInspectionJsonSchema } from '../../domain/recovery-json-schemas.js';
@@ -102,9 +107,14 @@ export class CodexAgentAdapter implements AgentAdapter {
         runId: input.plan.runId,
       });
     }
-    return this.invoke(input, 'apply', prompt, executionResultJsonSchema, (value) =>
-      ExecutionResultResponseSchema.parse(value),
+    const invocation = await this.invoke(
+      input,
+      'apply',
+      prompt,
+      executionResultJsonSchema,
+      parseExecutionResultResponse,
     );
+    return normalizeExecutionInvocation(invocation, input.runDirectory, 'apply');
   }
 
   async inspectRecovery(input: RecoveryInspectionInput) {
@@ -135,9 +145,14 @@ export class CodexAgentAdapter implements AgentAdapter {
       input.recoveryPlan.tool,
       input.recoveryPlan.recoveryRunId,
     );
-    return this.invoke(input, 'recover-apply', prompt, executionResultJsonSchema, (value) =>
-      ExecutionResultResponseSchema.parse(value),
+    const invocation = await this.invoke(
+      input,
+      'recover-apply',
+      prompt,
+      executionResultJsonSchema,
+      parseExecutionResultResponse,
     );
+    return normalizeExecutionInvocation(invocation, input.runDirectory, 'recover-apply');
   }
 
   manualFallback(runDirectory: string, phase: AgentPhase, prompt: string): Promise<string> {
@@ -300,6 +315,26 @@ export class CodexAgentAdapter implements AgentAdapter {
       );
     }
   }
+}
+
+async function normalizeExecutionInvocation(
+  invocation: InvocationRecord<ParsedExecutionResult>,
+  runDirectory: string,
+  phase: 'apply' | 'recover-apply',
+): Promise<InvocationRecord<ExecutionResult>> {
+  const { value, ...record } = invocation;
+  if (value.diagnostics.length > 0) {
+    await writeFile(
+      path.join(runDirectory, `${phase}-agent-response.json`),
+      `${JSON.stringify(value.result)}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+  }
+  return {
+    ...record,
+    value: value.result,
+    ...(value.diagnostics.length > 0 ? { boundaryDiagnostics: value.diagnostics } : {}),
+  };
 }
 
 function invocationRunId(

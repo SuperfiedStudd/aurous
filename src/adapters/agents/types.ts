@@ -2,6 +2,7 @@ import type {
   AgentName,
   AurousPlan,
   ContextBundle,
+  ExecutionBoundaryDiagnostic,
   ExecutionResult,
   PlanProposal,
   ToolName,
@@ -28,6 +29,7 @@ export interface InvocationRecord<T> {
   stdout: string;
   stderr: string;
   durationMs: number;
+  boundaryDiagnostics?: ExecutionBoundaryDiagnostic[];
 }
 
 export interface PlanGenerationInput {

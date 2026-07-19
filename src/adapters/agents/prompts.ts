@@ -56,6 +56,7 @@ EXECUTION SAFETY RULES:
 - Never request or expose credentials. Use only the user's existing configured MCP.
 - Report partial success precisely: completedActionIds and createdObjects must correspond to approved action IDs.
 - Use stable AUR-MCP-### or AUR-APPLY-### failure codes.
+- Every failure code must match AUR-<SINGLE-UPPERCASE-CATEGORY>-<3 DIGITS> exactly. Never add another segment or replace the three digits with a word.
 - Include externalId and url on every created object, using null when unavailable. Include actionId on every failure, using null only for a run-wide failure.
 
 Tool execution guidance:
@@ -108,6 +109,7 @@ RECOVERY SAFETY RULES:
 - Report created or verified external objects immediately in createdObjects using this action ID.
 - completedActionIds may contain only this action ID.
 - Do not execute dependent or subsequent actions.
+- Every failure code must match AUR-<SINGLE-UPPERCASE-CATEGORY>-<3 DIGITS> exactly. Use AUR-AGENT-005 when the response itself violates this contract; never emit values such as AUR-RECOVERY-CANCELLED.
 
 Tool guidance:
 ${productivity.executionInstructions({

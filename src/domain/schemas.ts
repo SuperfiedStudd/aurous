@@ -175,10 +175,25 @@ export interface ExecutionFailure {
   severity: Severity;
 }
 
+export const CanonicalAurousErrorCodeSchema = z.string().regex(/^AUR-[A-Z]+-[0-9]{3}$/);
+
+export interface ExecutionBoundaryDiagnostic {
+  kind: 'malformed-failure-code';
+  validationPath: Array<string | number>;
+  actionId?: string;
+  originalMalformedCode: string;
+  canonicalCode: 'AUR-AGENT-005';
+}
+
+export interface ParsedExecutionResult {
+  result: ExecutionResult;
+  diagnostics: ExecutionBoundaryDiagnostic[];
+}
+
 export const ExecutionFailureSchema = z
   .object({
     actionId: z.string().nullish(),
-    code: z.string().regex(/^AUR-[A-Z]+-[0-9]{3}$/),
+    code: CanonicalAurousErrorCodeSchema,
     summary: z.string(),
     probableCause: z.string(),
     nextAction: z.string(),
@@ -232,7 +247,7 @@ const ExecutionResponseFailureSchema = z
   }));
 
 /** Matches executionResultJsonSchema exactly, then removes transport-only nulls. */
-export const ExecutionResultResponseSchema = z
+const ExecutionResultResponseTransportSchema = z
   .object({
     status: z.enum(['succeeded', 'partial', 'failed', 'cancelled']),
     summary: z.string(),
@@ -244,6 +259,59 @@ export const ExecutionResultResponseSchema = z
     finishedAt: z.string(),
   })
   .strict();
+
+const ExecutionResultBoundarySchema = z.object({
+  status: z.enum(['succeeded', 'partial', 'failed', 'cancelled']),
+  summary: z.string(),
+  createdObjects: z.array(CreatedObjectSchema),
+  completedActionIds: z.array(z.string()),
+  warnings: z.array(z.string()),
+  failures: z.array(
+    z
+      .object({
+        actionId: z.string().nullish(),
+        code: z.string(),
+        summary: z.string(),
+        probableCause: z.string(),
+        nextAction: z.string(),
+        severity: SeveritySchema,
+      })
+      .transform<ExecutionFailure>(({ actionId, ...failure }) => ({
+        ...failure,
+        ...(actionId === null || actionId === undefined ? {} : { actionId }),
+      })),
+  ),
+  startedAt: z.string().datetime(),
+  finishedAt: z.string().datetime(),
+});
+
+export function normalizeExecutionResultBoundary(value: unknown): ParsedExecutionResult {
+  const boundary = ExecutionResultBoundarySchema.parse(value);
+  const diagnostics: ExecutionBoundaryDiagnostic[] = [];
+  const failures = boundary.failures.map((failure, index) => {
+    if (CanonicalAurousErrorCodeSchema.safeParse(failure.code).success) return failure;
+    diagnostics.push({
+      kind: 'malformed-failure-code',
+      validationPath: ['failures', index, 'code'],
+      ...(failure.actionId ? { actionId: failure.actionId } : {}),
+      originalMalformedCode: failure.code,
+      canonicalCode: 'AUR-AGENT-005',
+    });
+    return { ...failure, code: 'AUR-AGENT-005' };
+  });
+  return {
+    result: ExecutionResultSchema.parse({ ...boundary, failures }),
+    diagnostics,
+  };
+}
+
+export function parseExecutionResultResponse(value: unknown): ParsedExecutionResult {
+  return normalizeExecutionResultBoundary(ExecutionResultResponseTransportSchema.parse(value));
+}
+
+export const ExecutionResultResponseSchema = ExecutionResultResponseTransportSchema.transform(
+  (value) => normalizeExecutionResultBoundary(value).result,
+);
 
 export const RunStatusSchema = z.enum([
   'planning',

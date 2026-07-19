@@ -1,0 +1,27 @@
+{
+  "status": "cancelled",
+  "summary": "The exact database was verified successfully, but the approved update was not completed because the Notion MCP write was cancelled.",
+  "createdObjects": [
+    {
+      "actionId": "action-003",
+      "type": "database",
+      "name": "Milestone Tracker",
+      "externalId": "7f965334-0f81-4d4c-966b-6b3d9d969fa2",
+      "url": "https://app.notion.com/p/7f9653340f814d4c966b6b3d9d969fa2"
+    }
+  ],
+  "completedActionIds": [],
+  "warnings": [],
+  "failures": [
+    {
+      "actionId": "action-003",
+      "code": "AUR-RECOVERY-CANCELLED",
+      "summary": "The Notion MCP update was cancelled before completion.",
+      "probableCause": "The MCP tool call was cancelled by the user or authorization interface.",
+      "nextAction": "Explicitly approve a new recovery run for action-003 if the update should be retried.",
+      "severity": "recoverable"
+    }
+  ],
+  "startedAt": "2026-07-19T02:57:24Z",
+  "finishedAt": "2026-07-19T02:57:24Z"
+}
