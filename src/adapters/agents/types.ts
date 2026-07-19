@@ -7,6 +7,8 @@ import type {
   ToolName,
 } from '../../domain/schemas.js';
 import type { ProductivityAdapter } from '../productivity/types.js';
+import type { RecoveryInspection, RecoveryPlan } from '../../domain/recovery.js';
+import type { CreatedObject, PlanAction } from '../../domain/schemas.js';
 
 export type Readiness = 'ready' | 'not-ready' | 'unknown';
 
@@ -48,12 +50,42 @@ export interface PlanExecutionInput {
   signal?: AbortSignal;
 }
 
+export interface RecoveryInspectionInput {
+  recoveryRunId: string;
+  workspace: string;
+  runDirectory: string;
+  originalPlan: AurousPlan;
+  originalResult: ExecutionResult;
+  productivity: ProductivityAdapter;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
+
+export interface RecoveryActionExecutionInput {
+  workspace: string;
+  runDirectory: string;
+  recoveryPlan: RecoveryPlan;
+  action: PlanAction;
+  knownObjects: CreatedObject[];
+  productivity: ProductivityAdapter;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
+
 export interface AgentAdapter {
   readonly name: AgentName;
   diagnose(): Promise<AgentDiagnostic>;
   generatePlan(input: PlanGenerationInput): Promise<InvocationRecord<PlanProposal>>;
   executePlan(input: PlanExecutionInput): Promise<InvocationRecord<ExecutionResult>>;
-  manualFallback(runDirectory: string, phase: 'plan' | 'apply', prompt: string): Promise<string>;
+  inspectRecovery(input: RecoveryInspectionInput): Promise<InvocationRecord<RecoveryInspection>>;
+  executeRecoveryAction(
+    input: RecoveryActionExecutionInput,
+  ): Promise<InvocationRecord<ExecutionResult>>;
+  manualFallback(
+    runDirectory: string,
+    phase: 'plan' | 'apply' | 'recover-inspect' | 'recover-apply',
+    prompt: string,
+  ): Promise<string>;
 }
 
 export function emptyMcpDiagnostic(): AgentDiagnostic['mcp'] {

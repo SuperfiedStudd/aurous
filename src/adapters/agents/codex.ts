@@ -5,12 +5,20 @@ import { AurousError } from '../../core/errors.js';
 import { redactText } from '../../core/redact.js';
 import { ExecutionResultResponseSchema, PlanProposalResponseSchema } from '../../domain/schemas.js';
 import { executionResultJsonSchema, planProposalJsonSchema } from '../../domain/json-schemas.js';
-import { buildExecutionPrompt, buildPlanningPrompt } from './prompts.js';
+import { RecoveryInspectionSchema } from '../../domain/recovery.js';
+import { recoveryInspectionJsonSchema } from '../../domain/recovery-json-schemas.js';
+import {
+  buildExecutionPrompt,
+  buildPlanningPrompt,
+  buildRecoveryActionPrompt,
+  buildRecoveryInspectionPrompt,
+} from './prompts.js';
 import {
   commandFailure,
   parseJsonPayload,
   structuredOutputFailure,
   writeManualPrompt,
+  type AgentPhase,
 } from './helpers.js';
 import type {
   AgentAdapter,
@@ -18,6 +26,8 @@ import type {
   InvocationRecord,
   PlanExecutionInput,
   PlanGenerationInput,
+  RecoveryActionExecutionInput,
+  RecoveryInspectionInput,
 } from './types.js';
 
 export class CodexAgentAdapter implements AgentAdapter {
@@ -97,13 +107,66 @@ export class CodexAgentAdapter implements AgentAdapter {
     );
   }
 
-  manualFallback(runDirectory: string, phase: 'plan' | 'apply', prompt: string): Promise<string> {
+  async inspectRecovery(input: RecoveryInspectionInput) {
+    const prompt = buildRecoveryInspectionPrompt(input.originalPlan, input.originalResult);
+    await this.requireMcpReady(
+      input.runDirectory,
+      'recover-inspect',
+      prompt,
+      input.originalPlan.tool,
+      input.recoveryRunId,
+    );
+    return this.invoke(input, 'recover-inspect', prompt, recoveryInspectionJsonSchema, (value) =>
+      RecoveryInspectionSchema.parse(value),
+    );
+  }
+
+  async executeRecoveryAction(input: RecoveryActionExecutionInput) {
+    const prompt = buildRecoveryActionPrompt(
+      input.recoveryPlan,
+      input.action,
+      input.knownObjects,
+      input.productivity,
+    );
+    await this.requireMcpReady(
+      input.runDirectory,
+      'recover-apply',
+      prompt,
+      input.recoveryPlan.tool,
+      input.recoveryPlan.recoveryRunId,
+    );
+    return this.invoke(input, 'recover-apply', prompt, executionResultJsonSchema, (value) =>
+      ExecutionResultResponseSchema.parse(value),
+    );
+  }
+
+  manualFallback(runDirectory: string, phase: AgentPhase, prompt: string): Promise<string> {
     return writeManualPrompt(runDirectory, phase, prompt);
+  }
+
+  private async requireMcpReady(
+    runDirectory: string,
+    phase: AgentPhase,
+    prompt: string,
+    tool: 'notion' | 'linear' | 'mock',
+    runId: string,
+  ): Promise<void> {
+    const diagnostic = await this.requireReady(runDirectory, phase, prompt);
+    if (tool !== 'mock' && diagnostic.mcp[tool].status !== 'ready') {
+      const fallback = await this.manualFallback(runDirectory, phase, prompt);
+      throw new AurousError({
+        code: 'AUR-MCP-001',
+        summary: `${tool} MCP is not ready in Codex.`,
+        probableCause: diagnostic.mcp[tool].detail,
+        nextAction: `Configure the official ${tool} MCP in Codex, then retry. Manual prompt: ${fallback}`,
+        runId,
+      });
+    }
   }
 
   private async requireReady(
     runDirectory: string,
-    phase: 'plan' | 'apply',
+    phase: AgentPhase,
     prompt: string,
   ): Promise<AgentDiagnostic> {
     const diagnostic = await this.diagnose();
@@ -126,8 +189,12 @@ export class CodexAgentAdapter implements AgentAdapter {
   }
 
   private async invoke<T>(
-    input: PlanGenerationInput | PlanExecutionInput,
-    phase: 'plan' | 'apply',
+    input:
+      | PlanGenerationInput
+      | PlanExecutionInput
+      | RecoveryInspectionInput
+      | RecoveryActionExecutionInput,
+    phase: AgentPhase,
     prompt: string,
     schema: object,
     parse: (value: unknown) => T,
@@ -172,7 +239,7 @@ export class CodexAgentAdapter implements AgentAdapter {
           false,
           true,
           durationMs,
-          'plan' in input ? input.plan.runId : input.runId,
+          invocationRunId(input),
         );
       }
       throw error;
@@ -188,10 +255,10 @@ export class CodexAgentAdapter implements AgentAdapter {
         result.timedOut,
         result.isCanceled,
         durationMs,
-        'plan' in input ? input.plan.runId : input.runId,
+        invocationRunId(input),
       );
     }
-    const runId = 'plan' in input ? input.plan.runId : input.runId;
+    const runId = invocationRunId(input);
     let output: string;
     try {
       output = await readFile(outputPath, 'utf8');
@@ -233,6 +300,19 @@ export class CodexAgentAdapter implements AgentAdapter {
       );
     }
   }
+}
+
+function invocationRunId(
+  input:
+    | PlanGenerationInput
+    | PlanExecutionInput
+    | RecoveryInspectionInput
+    | RecoveryActionExecutionInput,
+): string {
+  if ('runId' in input) return input.runId;
+  if ('plan' in input) return input.plan.runId;
+  if ('recoveryRunId' in input) return input.recoveryRunId;
+  return input.recoveryPlan.recoveryRunId;
 }
 
 const requiredCodexFlags = [

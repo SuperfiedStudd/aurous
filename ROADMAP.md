@@ -15,7 +15,8 @@
 
 - Exercise live Notion and Linear MCPs in isolated test workspaces
 - Add adapter contract fixtures captured from supported Codex and Claude Code versions
-- Add interrupted-run recovery and an explicit stale-apply lock
+- [x] Add exact-ID, checkpointed interrupted-run recovery with a separate approval boundary
+- Add an explicit cross-process stale-apply lock
 - Improve duplicate/name-collision handling without expanding approved scope
 - Add configurable context budgets with previewed estimates
 
