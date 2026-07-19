@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { executionResultJsonSchema, planProposalJsonSchema } from '../src/domain/json-schemas.js';
+import { recoveryInspectionJsonSchema } from '../src/domain/recovery-json-schemas.js';
 import {
   AurousPlanSchema,
   ExecutionResultResponseSchema,
@@ -30,6 +31,7 @@ describe('Codex structured-output JSON schemas', () => {
   it.each([
     ['planning', planProposalJsonSchema],
     ['execution', executionResultJsonSchema],
+    ['recovery inspection', recoveryInspectionJsonSchema],
   ])('keeps every nested %s object closed, complete, and supported', (_name, schema) => {
     auditStructuredOutputSchema(schema, '$');
   });
@@ -176,6 +178,14 @@ describe('Codex structured-output JSON schemas', () => {
     const serialized = JSON.stringify(executionResultJsonSchema);
     expect(serialized).toContain('AUR-<SINGLE-UPPERCASE-CATEGORY>-<3 DIGITS>');
     expect(serialized).not.toContain('"pattern"');
+  });
+
+  it('uses typed filter state in the recovery inspection transport contract', () => {
+    const serialized = JSON.stringify(recoveryInspectionJsonSchema);
+    expect(serialized).toContain('filterState');
+    expect(serialized).toContain('conditionCount');
+    expect(serialized).toContain('fingerprint');
+    expect(serialized).not.toContain('filterSummary');
   });
 });
 

@@ -81,7 +81,11 @@ SAFETY RULES:
 - Do not search for substitutes or same-name objects.
 - Do not create, update, rename, move, delete, configure, or otherwise mutate anything.
 - Set found=true only when the exact external ID was fetched successfully.
-- Report exact title, type, parent external ID, property types/options, visible views/filters, and record count when exposed.
+- Report exact title, type, parent external ID, property types/options, visible views, typed filterState, and record count when exposed.
+- For a view with no active filter conditions, including an empty AND or OR group, set filterState to {"kind":"none","conditionCount":0,"fingerprint":null}.
+- For one or more active conditions, set kind="configured", report the exact condition count, and build fingerprint.nodes in deterministic path order. Use kind="and" or kind="or" for group nodes and kind="condition" for condition nodes. Each condition node must include its property, operator, and a canonical JSON string for its value; group nodes use null for those fields. Paths must preserve nested-group structure, for example "$", "$.conditions[0]", and "$.conditions[1].conditions[0]".
+- If the filter state cannot be determined confidently, set filterState to {"kind":"unknown","conditionCount":null,"fingerprint":null}. Never guess that an unexposed filter is empty.
+- Do not put explanatory prose in filterState or its fingerprint; use limitations for explanations.
 - Inspect available MCP tool definitions without invoking write tools. Report whether custom Status options, custom Select options, and existing view filters can be updated.
 - If a field is not exposed, use null or an empty array and explain the limitation.
 

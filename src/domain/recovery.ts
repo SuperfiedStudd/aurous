@@ -25,11 +25,104 @@ export const InspectedPropertySchema = z.object({
   options: z.array(z.string()),
 });
 
-export const InspectedViewSchema = z.object({
-  name: z.string(),
-  type: z.string(),
-  filterSummary: z.string().nullish(),
+export const FilterFingerprintNodeSchema = z
+  .object({
+    path: z.string().min(1),
+    kind: z.enum(['and', 'or', 'condition']),
+    property: z.string().nullable(),
+    operator: z.string().nullable(),
+    value: z.string().nullable(),
+  })
+  .superRefine((node, context) => {
+    if (node.kind === 'condition' && (!node.property || !node.operator)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Condition fingerprint nodes require property and operator.',
+      });
+    }
+    if (node.kind !== 'condition' && (node.property || node.operator || node.value)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Group fingerprint nodes cannot carry condition fields.',
+      });
+    }
+  });
+
+export const FilterFingerprintSchema = z
+  .object({
+    nodes: z.array(FilterFingerprintNodeSchema).min(1),
+  })
+  .refine(
+    (fingerprint) =>
+      new Set(fingerprint.nodes.map((node) => node.path)).size === fingerprint.nodes.length,
+    'Filter fingerprint node paths must be unique.',
+  );
+
+const NoFilterStateSchema = z.object({
+  kind: z.literal('none'),
+  conditionCount: z.literal(0),
+  fingerprint: z.null(),
 });
+
+const ConfiguredFilterStateSchema = z
+  .object({
+    kind: z.literal('configured'),
+    conditionCount: z.number().int().positive(),
+    fingerprint: FilterFingerprintSchema,
+  })
+  .refine(
+    (state) =>
+      state.fingerprint.nodes.filter((node) => node.kind === 'condition').length ===
+      state.conditionCount,
+    'Configured filter conditionCount must match its condition fingerprint nodes.',
+  );
+
+const UnknownFilterStateSchema = z.object({
+  kind: z.literal('unknown'),
+  conditionCount: z.null(),
+  fingerprint: z.null(),
+});
+
+export const ViewFilterStateSchema = z.union([
+  NoFilterStateSchema,
+  ConfiguredFilterStateSchema,
+  UnknownFilterStateSchema,
+]);
+export type ViewFilterState = z.infer<typeof ViewFilterStateSchema>;
+
+export interface InspectedView {
+  name: string;
+  type: string;
+  filterState: ViewFilterState;
+}
+
+const TypedInspectedViewSchema = z
+  .object({
+    name: z.string(),
+    type: z.string(),
+    filterState: ViewFilterStateSchema,
+  })
+  .strict();
+
+const LegacyInspectedViewSchema = z
+  .object({
+    name: z.string(),
+    type: z.string(),
+    filterSummary: z.string().nullish(),
+  })
+  .strict();
+
+export const InspectedViewSchema = z
+  .union([TypedInspectedViewSchema, LegacyInspectedViewSchema])
+  .transform<InspectedView>((view) =>
+    'filterState' in view
+      ? view
+      : {
+          name: view.name,
+          type: view.type,
+          filterState: parseLegacyFilterState(view.filterSummary),
+        },
+  );
 
 export const RecoveryInspectionObjectSchema = z.object({
   actionId: z.string(),
@@ -75,7 +168,7 @@ export interface RecoverySemanticInspection {
     title: string | null;
     parentId: string | null;
     properties: Array<{ name: string; type: string; options: string[] }>;
-    views: Array<{ name: string; type: string; filterState: string | null }>;
+    views: Array<{ name: string; type: string; filterState: ViewFilterState }>;
   }>;
   capabilities: {
     customStatusOptions: boolean;
@@ -107,7 +200,7 @@ export function recoverySemanticInspection(
           .map((view) => ({
             name: view.name,
             type: view.type,
-            filterState: normalizeFilterState(view.filterSummary),
+            filterState: normalizeTypedFilterState(view.filterState),
           }))
           .sort(compareJson),
       }))
@@ -157,21 +250,15 @@ function normalizeInspectionProperties(
     .sort(compareJson);
 }
 
-function normalizeFilterState(summary: string | null | undefined): string | null {
-  if (!summary) return null;
+function parseLegacyFilterState(summary: string | null | undefined): ViewFilterState {
+  if (!summary) return noFilterState();
   const normalized = summary.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
-  if (!normalized) return null;
+  if (!normalized) return noFilterState();
   const description = normalized.replace(/\.$/, '');
-  // Only known whole-description renderings are treated as empty. Real filter
-  // expressions, including ones containing these words as values, stay material.
-  if (emptyFilterDescriptions.has(description)) return null;
-  // Free-form statements that say the filter was not exposed are not reliable
-  // filter state and must not block a previously reviewed recovery.
-  if (unavailableFilterDescriptions.has(description)) return null;
-  return normalized;
+  return legacyEmptyFilterDescriptions.has(description) ? noFilterState() : unknownFilterState();
 }
 
-const emptyFilterDescriptions = new Set([
+const legacyEmptyFilterDescriptions = new Set([
   'no filter configured',
   'no filters configured',
   'no active filters',
@@ -187,24 +274,30 @@ const emptyFilterDescriptions = new Set([
   'and group containing zero filters',
   'advanced filter contains zero filters',
   'empty advanced filter group',
+  'no filters (explicit empty and filter group)',
   '0 filters',
   'clear filter',
 ]);
 
-const unavailableFilterDescriptions = new Set([
-  'not exposed',
-  'not available',
-  'unavailable',
-  'unknown',
-  'filter not exposed',
-  'filter not available',
-  'filter unavailable',
-  'filter unknown',
-  'filter configuration not exposed',
-  'filter configuration not available',
-  'filter state not exposed',
-  'filter state not available',
-]);
+function noFilterState(): ViewFilterState {
+  return { kind: 'none', conditionCount: 0, fingerprint: null };
+}
+
+function unknownFilterState(): ViewFilterState {
+  return { kind: 'unknown', conditionCount: null, fingerprint: null };
+}
+
+function normalizeTypedFilterState(state: ViewFilterState): ViewFilterState {
+  if (state.kind !== 'configured') return state;
+  return {
+    ...state,
+    fingerprint: {
+      nodes: [...state.fingerprint.nodes].sort((left, right) =>
+        left.path.localeCompare(right.path),
+      ),
+    },
+  };
+}
 
 function compareJson(left: unknown, right: unknown): number {
   return JSON.stringify(left).localeCompare(JSON.stringify(right));
@@ -216,7 +309,20 @@ function collectSemanticDifferences(
   path: string,
   differences: RecoverySemanticDifference[],
 ): void {
-  if (JSON.stringify(expected) === JSON.stringify(actual)) return;
+  if (
+    isViewFilterState(expected) &&
+    isViewFilterState(actual) &&
+    (expected.kind === 'unknown' || actual.kind === 'unknown')
+  ) {
+    differences.push({ path, expected, actual });
+    return;
+  }
+  if (
+    JSON.stringify(expected) === JSON.stringify(actual) &&
+    !containsUnknownFilterState(expected) &&
+    !containsUnknownFilterState(actual)
+  )
+    return;
   if (Array.isArray(expected) && Array.isArray(actual)) {
     const length = Math.max(expected.length, actual.length);
     for (let index = 0; index < length; index += 1) {
@@ -232,6 +338,22 @@ function collectSemanticDifferences(
     return;
   }
   differences.push({ path, expected: expected ?? null, actual: actual ?? null });
+}
+
+function isViewFilterState(value: unknown): value is ViewFilterState {
+  return (
+    isRecord(value) &&
+    (value.kind === 'none' || value.kind === 'configured' || value.kind === 'unknown') &&
+    'conditionCount' in value &&
+    'fingerprint' in value
+  );
+}
+
+function containsUnknownFilterState(value: unknown): boolean {
+  if (isViewFilterState(value)) return value.kind === 'unknown';
+  if (Array.isArray(value)) return value.some(containsUnknownFilterState);
+  if (isRecord(value)) return Object.values(value).some(containsUnknownFilterState);
+  return false;
 }
 
 export const RecoveryClassificationSchema = z.object({
@@ -554,13 +676,12 @@ function requiresExistingViewFilterRepair(
   return desiredViews.some((view) => {
     if (typeof view.name !== 'string' || !isRecord(view.filter)) return false;
     const existing = inspected.views.find((candidate) => candidate.name === view.name);
-    return Boolean(existing && isMissingFilter(existing.filterSummary));
+    return Boolean(existing && isMissingFilter(existing.filterState));
   });
 }
 
-function isMissingFilter(summary: string | null | undefined): boolean {
-  if (!summary?.trim()) return true;
-  return /^(?:none|no filter|unfiltered)$|empty(?:\s+and)?\s+filter/i.test(summary.trim());
+function isMissingFilter(state: ViewFilterState): boolean {
+  return state.kind !== 'configured';
 }
 
 function convertCustomStatusToSelect(action: PlanAction): PlanAction {
