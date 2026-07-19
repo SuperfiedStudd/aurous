@@ -20,6 +20,8 @@ PLANNING SAFETY RULES:
 - Use only the context embedded below. Do not read any path or discover additional context.
 - Propose explicit, bounded actions. Do not hide extra work in descriptions.
 - Destructive actions must be empty unless the objective truly requires deletion or irreversible mutation.
+- Every workspace item must include parent; use null when it has no parent.
+- Every planned action's properties field must be an array of unique {"key":"...","value":"..."} entries. Use descriptive namespaced keys and JSON-encoded strings for lists when needed so no Notion or Linear detail is lost.
 
 User objective:
 ${objective}
@@ -47,6 +49,7 @@ EXECUTION SAFETY RULES:
 - Never request or expose credentials. Use only the user's existing configured MCP.
 - Report partial success precisely: completedActionIds and createdObjects must correspond to approved action IDs.
 - Use stable AUR-MCP-### or AUR-APPLY-### failure codes.
+- Include externalId and url on every created object, using null when unavailable. Include actionId on every failure, using null only for a run-wide failure.
 
 Tool execution guidance:
 ${productivity.executionInstructions(plan)}

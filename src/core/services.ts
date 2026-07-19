@@ -366,11 +366,12 @@ export class AurousServices {
   }
 
   async diagnoseRun(runId: string, verbose = false): Promise<void> {
-    const [record, plan, result, events] = await Promise.all([
+    const [record, plan, result, events, agentFailureSummary] = await Promise.all([
       this.dependencies.store.getRun(runId),
       this.dependencies.store.loadPlan(runId).catch(() => undefined),
       this.dependencies.store.loadResult(runId),
       this.dependencies.store.readEvents(runId),
+      verbose ? this.dependencies.store.readAgentFailureSummary(runId) : Promise.resolve(undefined),
     ]);
     this.dependencies.output.log(`Aurous diagnostic report — ${runId}`);
     this.dependencies.output.log(`Status: ${record.status}`);
@@ -388,9 +389,16 @@ export class AurousServices {
       this.dependencies.output.log(
         `  ${event.timestamp} ${event.level.toUpperCase()} ${event.code}: ${event.summary}`,
       );
-      if (verbose && Object.keys(event.metadata).length > 0)
-        this.dependencies.output.log(`    ${JSON.stringify(event.metadata)}`);
+      if (verbose && Object.keys(event.metadata).length > 0) {
+        const metadata =
+          agentFailureSummary && 'probableCause' in event.metadata
+            ? { ...event.metadata, probableCause: 'See agent terminal error summary below.' }
+            : event.metadata;
+        this.dependencies.output.log(`    ${JSON.stringify(metadata)}`);
+      }
     }
+    if (verbose && agentFailureSummary)
+      this.dependencies.output.log(`Agent terminal error (redacted):\n${agentFailureSummary}`);
     if (verbose)
       this.dependencies.output.log(
         `Local run directory: ${this.dependencies.store.runDirectory(runId)}`,
@@ -427,6 +435,16 @@ function validateProposalSemantics(proposal: ReturnType<typeof PlanProposalSchem
         summary: 'The generated plan has invalid action sequencing or dependencies.',
         probableCause:
           'The agent returned action IDs or dependency references outside the plan contract.',
+        nextAction: 'Retry plan generation; no productivity tool was changed.',
+      });
+    }
+    const propertyKeys = action.properties.map((property) => property.key);
+    if (new Set(propertyKeys).size !== propertyKeys.length) {
+      throw new AurousError({
+        code: 'AUR-PLAN-004',
+        summary: `The generated plan has duplicate property keys in ${action.id}.`,
+        probableCause:
+          'The agent returned an ambiguous strict property-entry list for one planned action.',
         nextAction: 'Retry plan generation; no productivity tool was changed.',
       });
     }

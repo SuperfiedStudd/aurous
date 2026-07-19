@@ -1,4 +1,4 @@
-import type { PlanAction, PlanProposal } from '../../domain/schemas.js';
+import type { ActionPropertyEntry, PlanAction, PlanProposal } from '../../domain/schemas.js';
 import type {
   AgentAdapter,
   AgentDiagnostic,
@@ -82,7 +82,7 @@ function createMockProposal(tool: 'notion' | 'linear' | 'mock', objective: strin
     objectType: 'workspace',
     target: 'Aurous Mock Workspace',
     description: 'Create a deterministic local-only representation of the requested workspace.',
-    properties: { objective },
+    properties: propertyEntries({ objective }),
     dependsOn: [],
   };
   return {
@@ -135,7 +135,7 @@ function notionProposal(objective: string): PlanProposal {
         objectType: 'page',
         target: 'Project Command Center',
         description: 'Create the workspace landing page with an objective summary.',
-        properties: { objective },
+        properties: propertyEntries({ objective }),
         dependsOn: [],
       },
       {
@@ -144,7 +144,7 @@ function notionProposal(objective: string): PlanProposal {
         objectType: 'database',
         target: 'Projects',
         description: 'Create a project database under the command center.',
-        properties: {
+        properties: propertyEntries({
           parent: 'Project Command Center',
           fields: [
             'Name:title',
@@ -154,7 +154,7 @@ function notionProposal(objective: string): PlanProposal {
             'Health:select',
           ],
           statuses: ['Planned', 'Active', 'Blocked', 'Complete'],
-        },
+        }),
         dependsOn: ['action-001'],
       },
       {
@@ -163,7 +163,7 @@ function notionProposal(objective: string): PlanProposal {
         objectType: 'database',
         target: 'Tasks',
         description: 'Create a task database related to Projects.',
-        properties: {
+        properties: propertyEntries({
           parent: 'Project Command Center',
           fields: [
             'Name:title',
@@ -174,7 +174,7 @@ function notionProposal(objective: string): PlanProposal {
           ],
           statuses: ['Backlog', 'Next', 'In Progress', 'Blocked', 'Done'],
           relation: 'Tasks.Project -> Projects',
-        },
+        }),
         dependsOn: ['action-001', 'action-002'],
       },
       {
@@ -183,7 +183,10 @@ function notionProposal(objective: string): PlanProposal {
         objectType: 'page',
         target: 'Project Documentation',
         description: 'Create a documentation index linked from the command center.',
-        properties: { parent: 'Project Command Center', sourcePolicy: 'approved-context-only' },
+        properties: propertyEntries({
+          parent: 'Project Command Center',
+          sourcePolicy: 'approved-context-only',
+        }),
         dependsOn: ['action-001'],
       },
       {
@@ -192,7 +195,9 @@ function notionProposal(objective: string): PlanProposal {
         objectType: 'page-section',
         target: 'Project Command Center overview',
         description: 'Link Projects, Tasks, and Project Documentation from the landing page.',
-        properties: { links: ['Projects', 'Tasks', 'Project Documentation'] },
+        properties: propertyEntries({
+          links: ['Projects', 'Tasks', 'Project Documentation'],
+        }),
         dependsOn: ['action-002', 'action-003', 'action-004'],
       },
     ],
@@ -234,7 +239,7 @@ function linearProposal(objective: string): PlanProposal {
         objectType: 'project',
         target: 'Aurous Project',
         description: 'Create a focused Linear project with the user objective as its description.',
-        properties: { description: objective, priority: 'high' },
+        properties: propertyEntries({ description: objective, priority: 'high' }),
         dependsOn: [],
       },
       {
@@ -243,7 +248,7 @@ function linearProposal(objective: string): PlanProposal {
         objectType: 'label',
         target: 'foundation',
         description: 'Create a label for foundation delivery work.',
-        properties: { color: '#8B5CF6' },
+        properties: propertyEntries({ color: '#8B5CF6' }),
         dependsOn: [],
       },
       {
@@ -252,7 +257,7 @@ function linearProposal(objective: string): PlanProposal {
         objectType: 'milestone',
         target: 'Foundation',
         description: 'Create the initial delivery milestone in the project.',
-        properties: { project: 'Aurous Project' },
+        properties: propertyEntries({ project: 'Aurous Project' }),
         dependsOn: ['action-001'],
       },
       {
@@ -262,12 +267,12 @@ function linearProposal(objective: string): PlanProposal {
         target: 'Define the project operating model',
         description:
           'Create a high-priority issue describing ownership, workflow, and completion criteria.',
-        properties: {
+        properties: propertyEntries({
           project: 'Aurous Project',
           milestone: 'Foundation',
           priority: 'high',
           labels: ['foundation'],
-        },
+        }),
         dependsOn: ['action-001', 'action-002', 'action-003'],
       },
     ],
@@ -277,4 +282,11 @@ function linearProposal(objective: string): PlanProposal {
     expectedResult:
       'A Linear project with a foundation milestone, label, and prioritized starter issue.',
   };
+}
+
+function propertyEntries(values: Record<string, string | string[]>): ActionPropertyEntry[] {
+  return Object.entries(values).map(([key, value]) => ({
+    key,
+    value: Array.isArray(value) ? JSON.stringify(value) : value,
+  }));
 }

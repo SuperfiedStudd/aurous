@@ -51,6 +51,8 @@ logs/*.json                 redacted stdout/stderr captures
 
 Planning sends an embedded copy of selected context to the chosen local agent. It instructs the agent not to call tools or MCPs; Codex runs with a read-only sandbox and Claude Code disables tools when its inspected help advertises that flag. The returned proposal must pass both the Zod shape and semantic checks for sequential IDs, valid dependencies, and disclosed destructive actions.
 
+Codex transport schemas use the strict Structured Outputs subset: every object is closed, every declared key is required, and application-optional values are nullable. Boundary Zod schemas remove those nulls before persistence. Planned action configuration is transported as a strict list of unique string `{key, value}` entries; namespaced keys and JSON-encoded list values preserve Notion and Linear detail without an unsupported free-form object.
+
 Apply loads `plan.json`; it never regenerates the plan. Approved action IDs are an allowlist. The result is rejected if it references any unknown action ID. Adapter prompts prohibit discovery and scope expansion, and failures become a saved `result.json` plus stable `AUR-*` events.
 
 ## Adapter matrix
