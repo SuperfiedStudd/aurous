@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a focused Aurous improvement
+title: '[Feature]: '
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What setup or learning friction should Aurous remove?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the user-visible result, not only an implementation.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and scope
+      description: How should preview, confirmation, context boundaries, and partial failure work?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        [
+          CLI,
+          Context ingestion,
+          Agent adapter,
+          Notion,
+          Linear,
+          State storage,
+          Diagnostics,
+          Documentation,
+        ]
+    validations:
+      required: true

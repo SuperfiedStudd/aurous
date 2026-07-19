@@ -1,0 +1,4 @@
+dist
+coverage
+.aurous
+package-lock.json
