@@ -183,6 +183,11 @@ export interface RecoverySemanticDifference {
   actual: unknown;
 }
 
+export interface RecoverySemanticComparison {
+  differences: RecoverySemanticDifference[];
+  stableUnknownFilterPaths: string[];
+}
+
 export function recoverySemanticInspection(
   inspection: RecoveryInspection,
 ): RecoverySemanticInspection {
@@ -221,14 +226,23 @@ export function diffRecoverySemanticInspections(
   expected: RecoveryInspection,
   actual: RecoveryInspection,
 ): RecoverySemanticDifference[] {
+  return compareRecoverySemanticInspections(expected, actual).differences;
+}
+
+export function compareRecoverySemanticInspections(
+  expected: RecoveryInspection,
+  actual: RecoveryInspection,
+): RecoverySemanticComparison {
   const differences: RecoverySemanticDifference[] = [];
+  const stableUnknownFilterPaths: string[] = [];
   collectSemanticDifferences(
     recoverySemanticInspection(expected),
     recoverySemanticInspection(actual),
     '$',
     differences,
+    stableUnknownFilterPaths,
   );
-  return differences;
+  return { differences, stableUnknownFilterPaths };
 }
 
 function normalizeInspectionProperties(
@@ -308,32 +322,47 @@ function collectSemanticDifferences(
   actual: unknown,
   path: string,
   differences: RecoverySemanticDifference[],
+  stableUnknownFilterPaths: string[],
 ): void {
-  if (
-    isViewFilterState(expected) &&
-    isViewFilterState(actual) &&
-    (expected.kind === 'unknown' || actual.kind === 'unknown')
-  ) {
-    differences.push({ path, expected, actual });
-    return;
+  if (isViewFilterState(expected) && isViewFilterState(actual)) {
+    if (expected.kind === 'unknown' && actual.kind === 'unknown') {
+      if (JSON.stringify(expected) === JSON.stringify(actual)) {
+        stableUnknownFilterPaths.push(path);
+      } else {
+        differences.push({ path, expected, actual });
+      }
+      return;
+    }
+    if (expected.kind === 'unknown' || actual.kind === 'unknown') {
+      differences.push({ path, expected, actual });
+      return;
+    }
   }
-  if (
-    JSON.stringify(expected) === JSON.stringify(actual) &&
-    !containsUnknownFilterState(expected) &&
-    !containsUnknownFilterState(actual)
-  )
+  if (JSON.stringify(expected) === JSON.stringify(actual) && !containsUnknownFilterState(expected))
     return;
   if (Array.isArray(expected) && Array.isArray(actual)) {
     const length = Math.max(expected.length, actual.length);
     for (let index = 0; index < length; index += 1) {
-      collectSemanticDifferences(expected[index], actual[index], `${path}[${index}]`, differences);
+      collectSemanticDifferences(
+        expected[index],
+        actual[index],
+        `${path}[${index}]`,
+        differences,
+        stableUnknownFilterPaths,
+      );
     }
     return;
   }
   if (isRecord(expected) && isRecord(actual)) {
     const keys = [...new Set([...Object.keys(expected), ...Object.keys(actual)])].sort();
     for (const key of keys) {
-      collectSemanticDifferences(expected[key], actual[key], `${path}.${key}`, differences);
+      collectSemanticDifferences(
+        expected[key],
+        actual[key],
+        `${path}.${key}`,
+        differences,
+        stableUnknownFilterPaths,
+      );
     }
     return;
   }

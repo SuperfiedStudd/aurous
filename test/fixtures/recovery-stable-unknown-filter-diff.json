@@ -1,0 +1,37 @@
+[
+  {
+    "path": "$.objects[2].views[0].filterState",
+    "expected": { "kind": "unknown", "conditionCount": null, "fingerprint": null },
+    "actual": { "kind": "unknown", "conditionCount": null, "fingerprint": null }
+  },
+  {
+    "path": "$.objects[2].views[1].filterState",
+    "expected": { "kind": "unknown", "conditionCount": null, "fingerprint": null },
+    "actual": { "kind": "unknown", "conditionCount": null, "fingerprint": null }
+  },
+  {
+    "path": "$.objects[2].views[2].filterState",
+    "expected": { "kind": "unknown", "conditionCount": null, "fingerprint": null },
+    "actual": { "kind": "unknown", "conditionCount": null, "fingerprint": null }
+  },
+  {
+    "path": "$.objects[2].views[3].filterState",
+    "expected": { "kind": "unknown", "conditionCount": null, "fingerprint": null },
+    "actual": { "kind": "unknown", "conditionCount": null, "fingerprint": null }
+  },
+  {
+    "path": "$.objects[3].views[2].filterState",
+    "expected": { "kind": "unknown", "conditionCount": null, "fingerprint": null },
+    "actual": { "kind": "unknown", "conditionCount": null, "fingerprint": null }
+  },
+  {
+    "path": "$.objects[3].views[3].filterState",
+    "expected": { "kind": "unknown", "conditionCount": null, "fingerprint": null },
+    "actual": { "kind": "unknown", "conditionCount": null, "fingerprint": null }
+  },
+  {
+    "path": "$.objects[3].views[4].filterState",
+    "expected": { "kind": "unknown", "conditionCount": null, "fingerprint": null },
+    "actual": { "kind": "unknown", "conditionCount": null, "fingerprint": null }
+  }
+]

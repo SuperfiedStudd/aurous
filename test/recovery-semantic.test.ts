@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
   RecoveryInspectionSchema,
+  compareRecoverySemanticInspections,
   diffRecoverySemanticInspections,
   recoverySemanticFingerprint,
   recoverySemanticInspection,
@@ -361,23 +362,80 @@ describe('recovery semantic verification', () => {
     expect(diffRecoverySemanticInspections(expected, actual)).not.toEqual([]);
   });
 
-  it('fails closed whenever either typed filter state is unknown', () => {
+  it('treats identical typed unknown states as unchanged and reports their paths', () => {
     const unknown = singleTypedFilterInspection(unknownFilterState());
     const sameUnknown = singleTypedFilterInspection(unknownFilterState());
-    const empty = singleTypedFilterInspection(noFilterState());
 
-    expect(diffRecoverySemanticInspections(unknown, sameUnknown)).not.toEqual([]);
-    expect(diffRecoverySemanticInspections(empty, unknown)).not.toEqual([]);
+    expect(compareRecoverySemanticInspections(unknown, sameUnknown)).toEqual({
+      differences: [],
+      stableUnknownFilterPaths: ['$.objects[0].views[0].filterState'],
+    });
   });
 
-  it('converts ambiguous legacy filter prose to unknown and fails closed', () => {
+  it('fails closed when unknown is compared with none or configured', () => {
+    const unknown = singleTypedFilterInspection(unknownFilterState());
+    const empty = singleTypedFilterInspection(noFilterState());
+    const configured = singleTypedFilterInspection(configuredState());
+
+    expect(diffRecoverySemanticInspections(empty, unknown)).not.toEqual([]);
+    expect(diffRecoverySemanticInspections(unknown, configured)).not.toEqual([]);
+  });
+
+  it.each([
+    ['conditionCount', { kind: 'unknown', conditionCount: 1, fingerprint: null }],
+    [
+      'fingerprint',
+      {
+        kind: 'unknown',
+        conditionCount: null,
+        fingerprint: configuredState().kind === 'configured' ? configuredState().fingerprint : null,
+      },
+    ],
+  ])('fails closed when an unknown filter %s changes', (_label, changedState) => {
+    const expected = singleTypedFilterInspection(unknownFilterState());
+    const actual = structuredClone(expected);
+    actual.objects[0]!.views[0]!.filterState = changedState as ViewFilterState;
+
+    expect(diffRecoverySemanticInspections(expected, actual)).not.toEqual([]);
+  });
+
+  it('converts identical ambiguous legacy prose to stable unknown', () => {
     const legacy = singleFilterInspection('Status equals "Backlog"');
     const sameLegacy = singleFilterInspection('Status equals "Backlog"');
 
     expect(recoverySemanticInspection(legacy).objects[0]?.views[0]?.filterState).toEqual(
       unknownFilterState(),
     );
-    expect(diffRecoverySemanticInspections(legacy, sameLegacy)).not.toEqual([]);
+    expect(compareRecoverySemanticInspections(legacy, sameLegacy)).toEqual({
+      differences: [],
+      stableUnknownFilterPaths: ['$.objects[0].views[0].filterState'],
+    });
+  });
+
+  it('matches the exact seven stable unknown paths from run-20260719T042308Z-f4ec1a', async () => {
+    const capturedDiff = JSON.parse(
+      await readFile(
+        new URL('./fixtures/recovery-stable-unknown-filter-diff.json', import.meta.url),
+        'utf8',
+      ),
+    ) as Array<{
+      path: string;
+      expected: ViewFilterState;
+      actual: ViewFilterState;
+    }>;
+    const expected = stableUnknownCapturedInspection();
+    const actual = stableUnknownCapturedInspection();
+
+    expect(capturedDiff).toHaveLength(7);
+    expect(
+      capturedDiff.every(
+        (entry) => JSON.stringify(entry.expected) === JSON.stringify(entry.actual),
+      ),
+    ).toBe(true);
+    expect(compareRecoverySemanticInspections(expected, actual)).toEqual({
+      differences: [],
+      stableUnknownFilterPaths: capturedDiff.map((entry) => entry.path),
+    });
   });
 
   it.each([
@@ -537,6 +595,40 @@ function legacyFilterListInspection(filterSummaries: Array<string | null>): Reco
           filterSummary,
         })),
       ),
+    ],
+    customStatusOptions: { supported: false, evidence: 'Captured capability prose.' },
+    customSelectOptions: { supported: true, evidence: 'Captured capability prose.' },
+    updateViewFilters: { supported: true, evidence: 'Captured capability prose.' },
+    warnings: [],
+  });
+}
+
+function stableUnknownCapturedInspection(): RecoveryInspection {
+  const unknown = unknownFilterState();
+  const none = noFilterState();
+  return RecoveryInspectionSchema.parse({
+    objects: [
+      inspectionObject('action-001', 'page', 'Aurous Product HQ', []),
+      inspectionObject('action-002', 'page', 'Project Overview', []),
+      {
+        ...inspectionObject('action-003', 'database', 'Milestone Tracker', []),
+        views: [
+          { name: 'All Milestones', type: 'table', filterState: unknown },
+          { name: 'Default view', type: 'table', filterState: unknown },
+          { name: 'Delivery Timeline', type: 'timeline', filterState: unknown },
+          { name: 'Status Board', type: 'board', filterState: unknown },
+        ],
+      },
+      {
+        ...inspectionObject('action-005', 'database', 'Task Database', []),
+        views: [
+          { name: 'Backlog', type: 'table', filterState: none },
+          { name: 'Blocked', type: 'table', filterState: none },
+          { name: 'By Milestone', type: 'table', filterState: unknown },
+          { name: 'Default view', type: 'table', filterState: unknown },
+          { name: 'Work Board', type: 'board', filterState: unknown },
+        ],
+      },
     ],
     customStatusOptions: { supported: false, evidence: 'Captured capability prose.' },
     customSelectOptions: { supported: true, evidence: 'Captured capability prose.' },
