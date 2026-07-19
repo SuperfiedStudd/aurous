@@ -342,7 +342,7 @@ describe('AurousServices recovery flow', () => {
     });
   });
 
-  it('fails closed before any recovery write when the filter state stays unknown', async () => {
+  it('continues past stable unknown filters and persists an AUR-RECOVERY-106 warning', async () => {
     const { workspace, store, capture, originalRunId } = await fixture();
     const mock = new MockAgentAdapter();
     let executionCalls = 0;
@@ -387,19 +387,26 @@ describe('AurousServices recovery flow', () => {
     });
     const recovery = await services.recover(originalRunId);
 
-    await expect(
-      services.applyRecovery(recovery.recoveryRunId, {
-        confirm: () => Promise.resolve(true),
-      }),
-    ).rejects.toMatchObject({ code: 'AUR-RECOVERY-011' });
+    const result = await services.applyRecovery(recovery.recoveryRunId, {
+      confirm: () => Promise.resolve(true),
+    });
 
-    expect(executionCalls).toBe(0);
+    expect(result?.status).toBe('succeeded');
+    expect(executionCalls).toBeGreaterThan(0);
+    expect(result?.warnings).toContainEqual(
+      expect.stringContaining('$.objects[0].views[0].filterState'),
+    );
     const event = (await store.readEvents(recovery.recoveryRunId)).find(
-      (candidate) => candidate.code === 'AUR-RECOVERY-011',
+      (candidate) => candidate.code === 'AUR-RECOVERY-106',
     );
-    expect(event?.metadata.semanticDiff).toContainEqual(
-      expect.objectContaining({ path: '$.objects[0].views[0].filterState' }),
-    );
+    expect(event).toMatchObject({
+      level: 'warning',
+      summary: 'Pre-write verification preserved stable unknown view-filter states.',
+      metadata: {
+        originalRunId,
+        filterPaths: ['$.objects[0].views[0].filterState'],
+      },
+    });
   });
 
   it('stops after a partial recovery action and executes no subsequent actions', async () => {

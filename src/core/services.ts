@@ -23,7 +23,7 @@ import {
 import {
   RecoveryInspectionSchema,
   buildRecoveryPlan,
-  diffRecoverySemanticInspections,
+  compareRecoverySemanticInspections,
   type RecoveryPlan,
 } from '../domain/recovery.js';
 import { asAurousError, AurousCommandError, AurousError } from './errors.js';
@@ -652,9 +652,11 @@ export class AurousServices {
     );
     const freshInspection = RecoveryInspectionSchema.parse(verificationInvocation.value);
     validateInspectionScope(originalResult, freshInspection.objects);
-    const semanticDiff = redactValue(
-      diffRecoverySemanticInspections(recoveryPlan.inspection, freshInspection),
+    const semanticComparison = compareRecoverySemanticInspections(
+      recoveryPlan.inspection,
+      freshInspection,
     );
+    const semanticDiff = redactValue(semanticComparison.differences);
     if (semanticDiff.length > 0) {
       const error = new AurousError({
         code: 'AUR-RECOVERY-011',
@@ -689,6 +691,22 @@ export class AurousServices {
       });
       throw error;
     }
+    const stableUnknownFilterWarning =
+      semanticComparison.stableUnknownFilterPaths.length > 0
+        ? `Pre-write verification could not structurally inspect unchanged view filters at: ${semanticComparison.stableUnknownFilterPaths.join(', ')}.`
+        : undefined;
+    if (stableUnknownFilterWarning) {
+      await this.event(
+        recoveryRunId,
+        'warning',
+        'AUR-RECOVERY-106',
+        'Pre-write verification preserved stable unknown view-filter states.',
+        {
+          originalRunId: recoveryPlan.originalRunId,
+          filterPaths: semanticComparison.stableUnknownFilterPaths,
+        },
+      );
+    }
     const freshPlan = buildRecoveryPlan({
       recoveryRunId,
       originalPlan,
@@ -722,7 +740,7 @@ export class AurousServices {
     const startedAt = this.now().toISOString();
     let createdObjects: ExecutionResult['createdObjects'] = [];
     let completedActionIds: string[] = [];
-    let warnings: string[] = [];
+    let warnings: string[] = stableUnknownFilterWarning ? [stableUnknownFilterWarning] : [];
     let failures: ExecutionResult['failures'] = [];
     let invocationInProgress = false;
     let activeActionId: string | undefined;
