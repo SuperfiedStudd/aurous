@@ -37,6 +37,13 @@ import {
   formatRun,
   type Output,
 } from './output.js';
+import {
+  formatApprovalReceipt,
+  formatOpeningHeader,
+  formatPlainNotice,
+  formatProgress,
+  type ProgressWord,
+} from './presentation.js';
 import { createRunId } from './run-id.js';
 import { redactValue } from './redact.js';
 import type { RunStore } from './run-store.js';
@@ -166,17 +173,23 @@ export class AurousServices {
         nextAction: 'Describe the outcome you want with --prompt.',
       });
     }
+    const runId = createRunId(this.now());
+    const timestamp = this.now().toISOString();
+    this.dependencies.output.log(
+      formatOpeningHeader({
+        agent: agentName,
+        target: toolName,
+        mode: 'Planning',
+        runId,
+        ...(agentName === 'mock' ? { model: 'built-in deterministic adapter' } : {}),
+      }),
+    );
     const context = await ingestContext({
       cwd: this.dependencies.workspace,
       paths: options.contextPaths,
     });
-    this.dependencies.output.log(formatContextSummary(context.summary));
-    this.dependencies.output.log(
-      '\nNo productivity tool has been changed. Generating a read-only plan...',
-    );
+    this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
 
-    const runId = createRunId(this.now());
-    const timestamp = this.now().toISOString();
     const record: RunRecord = {
       runId,
       createdAt: timestamp,
@@ -236,7 +249,12 @@ export class AurousServices {
         actionCount: plan.plannedActions.length,
       });
       this.dependencies.output.log(`\n${formatPlan(plan)}`);
-      this.dependencies.output.log(`\nSaved locally. Apply with: aurous apply ${runId}`);
+      this.dependencies.output.log(
+        `\n${formatPlainNotice('Next', [
+          'No productivity tool has been changed.',
+          `Apply this exact saved plan with: aurous apply ${runId}`,
+        ])}`,
+      );
       return plan;
     } catch (error) {
       const classified = asAurousError(error, runId);
@@ -276,18 +294,34 @@ export class AurousServices {
         nextAction: 'Pass an existing Linear team name, key, or UUID with --team.',
       });
     }
+    const runId = createRunId(this.now());
+    const timestamp = this.now().toISOString();
+    this.dependencies.output.log(
+      formatOpeningHeader({
+        agent: agentName,
+        target: 'linear',
+        mode: 'Demo',
+        runId,
+        ...(agentName === 'mock' ? { model: 'built-in deterministic adapter' } : {}),
+      }),
+    );
     const context = await ingestContext({
       cwd: this.dependencies.workspace,
       paths: options.contextPaths,
     });
     const preset = parseLinearDemoContext(context);
-    this.dependencies.output.log(formatContextSummary(context.summary));
+    this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
     this.dependencies.output.log(
-      `\nLinear demo preset: ${preset.preset}\nDestination team: ${team}\nGenerating a deterministic read-only plan...`,
+      `\n${formatPlainNotice('Destination', [
+        `Preset  ${preset.preset}`,
+        `Team    ${team}`,
+        'Writes  none until explicit approval',
+      ])}`,
+    );
+    this.dependencies.output.log(
+      `\n${formatProgress('Assaying', 'Generating a deterministic Linear plan from approved context.')}`,
     );
 
-    const runId = createRunId(this.now());
-    const timestamp = this.now().toISOString();
     const generatedPlan = buildLinearDemoPlan({
       runId,
       createdAt: timestamp,
@@ -324,6 +358,9 @@ export class AurousServices {
         action.properties.some((property) => property.key === 'linear.dedupe.knownExternalId'),
       ).length,
     });
+    this.dependencies.output.log(
+      formatProgress('Hallmarking', 'Validated plan saved to local run history.'),
+    );
     this.dependencies.output.log(`\n${formatPlan(plan)}`);
     return plan;
   }
@@ -413,7 +450,18 @@ export class AurousServices {
         runId,
       });
     }
-    if (!options.alreadyPreviewed) this.dependencies.output.log(formatPlan(plan));
+    if (!options.alreadyPreviewed) {
+      this.dependencies.output.log(
+        formatOpeningHeader({
+          agent: plan.agent,
+          target: plan.tool,
+          mode: 'Approval',
+          runId,
+          ...(plan.agent === 'mock' ? { model: 'built-in deterministic adapter' } : {}),
+        }),
+      );
+      this.dependencies.output.log(`\n${formatPlan(plan)}`);
+    }
     const confirmed = options.confirmed || (options.confirm ? await options.confirm() : false);
     if (!confirmed) {
       await this.event(
@@ -422,9 +470,18 @@ export class AurousServices {
         'AUR-APPLY-100',
         'Apply preview declined; no external writes attempted.',
       );
-      this.dependencies.output.log('\nApply cancelled. No external writes were attempted.');
+      this.dependencies.output.log(
+        `\n${formatPlainNotice('Approval', [
+          'Apply cancelled. No external writes were attempted.',
+        ])}`,
+      );
       return undefined;
     }
+    this.dependencies.output.log(
+      `\n${formatApprovalReceipt(
+        options.confirmed ? 'Explicit --yes approval received.' : 'Typed approval received.',
+      )}`,
+    );
 
     await this.dependencies.store.updateStatus(runId, 'applying');
     await this.event(
@@ -478,7 +535,7 @@ export class AurousServices {
           compatibilityNoteCount: result.compatibilityNotes?.length ?? 0,
         },
       );
-      this.dependencies.output.log(formatExecutionResult(result));
+      this.dependencies.output.log(`\n${formatExecutionResult(result, { runId, plan })}`);
       return result;
     } catch (error) {
       const classified = asAurousError(error, runId);
@@ -1145,18 +1202,23 @@ export class AurousServices {
     task: () => Promise<T>,
   ): Promise<T> {
     const started = Date.now();
-    this.dependencies.output.log(`Agent invocation started: ${phase}.`);
+    const progressWord = progressWordFor(phase);
+    this.dependencies.output.log(
+      formatProgress(progressWord, `Agent invocation started: ${phase}.`),
+    );
     const timer = setInterval(() => {
       const elapsedSeconds = Math.max(1, Math.round((Date.now() - started) / 1_000));
       this.dependencies.output.log(
-        `Agent invocation in progress: ${phase} (${elapsedSeconds}s elapsed).`,
+        formatProgress(progressWord, `Agent invocation in progress: ${phase}.`, elapsedSeconds),
       );
     }, this.progressIntervalMs);
     timer.unref?.();
     try {
       const value = await task();
       const elapsedSeconds = ((Date.now() - started) / 1_000).toFixed(1);
-      this.dependencies.output.log(`Agent invocation completed: ${phase} (${elapsedSeconds}s).`);
+      this.dependencies.output.log(
+        formatProgress('Hallmarking', `Agent invocation completed: ${phase}.`, elapsedSeconds),
+      );
       return value;
     } catch (error) {
       const elapsedSeconds = ((Date.now() - started) / 1_000).toFixed(1);
@@ -1166,7 +1228,9 @@ export class AurousServices {
           : error instanceof AurousError && error.code === 'AUR-AGENT-003'
             ? 'timed out'
             : 'failed';
-      this.dependencies.output.log(`Agent invocation ${outcome}: ${phase} (${elapsedSeconds}s).`);
+      this.dependencies.output.log(
+        formatProgress('Tempering', `Agent invocation ${outcome}: ${phase}.`, elapsedSeconds),
+      );
       throw error;
     } finally {
       clearInterval(timer);
@@ -1188,6 +1252,13 @@ export class AurousServices {
       metadata,
     });
   }
+}
+
+function progressWordFor(phase: string): ProgressWord {
+  if (phase.includes('apply') || phase.includes('action')) return 'Forging';
+  if (phase.includes('plan') || phase.includes('inspection') || phase.includes('verification'))
+    return 'Assaying';
+  return 'Polishing';
 }
 
 function parseRecoveryActionBoundary(

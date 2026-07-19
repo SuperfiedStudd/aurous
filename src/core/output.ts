@@ -1,6 +1,7 @@
 import type { AurousError } from './errors.js';
 import type { AurousPlan, ContextSummary, ExecutionResult, RunRecord } from '../domain/schemas.js';
 import type { RecoveryPlan } from '../domain/recovery.js';
+import { renderPanel, type RenderOptions } from './presentation.js';
 
 export interface Output {
   log(message?: string): void;
@@ -12,79 +13,110 @@ export const consoleOutput: Output = {
   error: (message) => console.error(message),
 };
 
-export function formatContextSummary(summary: ContextSummary): string {
+export function formatContextSummary(summary: ContextSummary, options: RenderOptions = {}): string {
   const lines = [
     'Context summary (shown before agent invocation)',
-    `  Approved paths: ${summary.approvedPaths.join(', ')}`,
-    `  Included: ${summary.fileCount} files, ${summary.totalBytes} bytes`,
+    `Approved paths  ${summary.approvedPaths.join(', ')}`,
+    `Included        ${summary.fileCount} files · ${summary.totalBytes} bytes`,
   ];
   if (summary.git) {
-    lines.push(`  Git branch: ${summary.git.branch || '(detached)'}`);
+    lines.push(`Git branch      ${summary.git.branch || '(detached)'}`);
     if (summary.git.recentCommits.length > 0)
-      lines.push(`  Recent commits: ${summary.git.recentCommits.join(' | ')}`);
+      lines.push(`Recent commits  ${summary.git.recentCommits.join(' | ')}`);
   }
+  if (summary.files.length > 0) lines.push('', 'Source material');
   for (const file of summary.files)
-    lines.push(`  + ${file.relativePath} (${file.category}, ${file.bytes} B)`);
-  for (const skipped of summary.skipped) lines.push(`  - skipped: ${skipped}`);
-  return lines.join('\n');
+    lines.push(`+ ${file.relativePath}  ${file.category} · ${file.bytes} B`);
+  for (const skipped of summary.skipped) lines.push(`- skipped ${skipped}`);
+  return renderPanel('Context', lines, options);
 }
 
-export function formatPlan(plan: AurousPlan): string {
-  const lines = [
-    `Plan ${plan.runId}`,
-    `  Agent/tool: ${plan.agent} + ${plan.tool}`,
-    `  Objective: ${plan.objective}`,
-    `  Expected result: ${plan.expectedResult}`,
+export function formatPlan(plan: AurousPlan, options: RenderOptions = {}): string {
+  const planLines = [
+    `Run       ${plan.runId}`,
+    `Objective ${plan.objective}`,
+    `Outcome   ${plan.expectedResult}`,
     '',
     'Workspace structure:',
     ...plan.proposedWorkspaceStructure.map(
-      (item) => `  - ${item.kind}: ${item.name} — ${item.purpose}`,
+      (item) => `- ${item.kind}: ${item.name} — ${item.purpose}`,
     ),
-    '',
-    'Exact approved actions:',
   ];
+  const previewLines = [`${plan.plannedActions.length} exact action(s) · no writes yet`, ''];
   for (const action of plan.plannedActions) {
-    lines.push(
-      `  ${action.id}  ${action.operation} ${action.objectType} "${action.target}" — ${action.description}`,
+    previewLines.push(
+      `${action.id}  ${action.operation.toUpperCase()} ${action.objectType}  ${action.target}`,
+      `  ${action.description}`,
     );
-    for (const property of action.properties) lines.push(`    ${property.key}: ${property.value}`);
-    if (action.dependsOn.length > 0) lines.push(`    depends on: ${action.dependsOn.join(', ')}`);
+    for (const property of action.properties)
+      previewLines.push(`  ${property.key}: ${property.value}`);
+    if (action.dependsOn.length > 0)
+      previewLines.push(`  depends on: ${action.dependsOn.join(', ')}`);
+    previewLines.push('');
   }
   if (plan.assumptions.length > 0)
-    lines.push('', 'Assumptions:', ...plan.assumptions.map((item) => `  - ${item}`));
+    previewLines.push('Assumptions', ...plan.assumptions.map((item) => `- ${item}`), '');
   if (plan.warnings.length > 0)
-    lines.push('', 'Warnings:', ...plan.warnings.map((item) => `  ! ${item}`));
+    previewLines.push('Warnings', ...plan.warnings.map((item) => `! ${item}`), '');
   if (plan.destructiveActions.length > 0) {
-    lines.push('', 'DESTRUCTIVE ACTIONS:');
+    previewLines.push('DESTRUCTIVE ACTIONS');
     for (const item of plan.destructiveActions)
-      lines.push(`  ! ${item.actionId}: ${item.impact} (recovery: ${item.recovery})`);
+      previewLines.push(`! ${item.actionId}: ${item.impact}`, `  recovery: ${item.recovery}`);
+  } else {
+    previewLines.push('Destructive actions  none');
   }
-  return lines.join('\n');
+  return `${renderPanel('Plan', planLines, options)}\n${renderPanel('Preview', trimBlankEnd(previewLines), options)}`;
 }
 
-export function formatExecutionResult(result: ExecutionResult): string {
+export function formatExecutionResult(
+  result: ExecutionResult,
+  context: { runId?: string; plan?: AurousPlan } = {},
+  options: RenderOptions = {},
+): string {
+  const operationByAction = new Map(
+    context.plan?.plannedActions.map((action) => [action.id, action.operation]) ?? [],
+  );
+  const updatedCount = result.createdObjects.filter(
+    (object) => operationByAction.get(object.actionId) === 'update',
+  ).length;
+  const createdCount = result.createdObjects.length - updatedCount;
   const lines = [
-    `Apply ${result.status.toUpperCase()}: ${result.summary}`,
-    `  Completed actions: ${result.completedActionIds.length}`,
-    `  Created objects: ${result.createdObjects.length}`,
-    `  Skipped actions: ${result.skippedActions?.length ?? 0}`,
-    `  Compatibility notes: ${result.compatibilityNotes?.length ?? 0}`,
+    `Status              ${result.status.toUpperCase()}`,
+    ...(context.runId ? [`Run                 ${context.runId}`] : []),
+    `Summary             ${result.summary}`,
+    '',
+    `Completed actions: ${result.completedActionIds.length}`,
+    `Created objects: ${createdCount}`,
+    `Updated objects: ${updatedCount}`,
+    `Skipped actions: ${result.skippedActions?.length ?? 0}`,
+    `Compatibility notes: ${result.compatibilityNotes?.length ?? 0}`,
   ];
+  if (result.createdObjects.length > 0) lines.push('', 'Objects');
   for (const object of result.createdObjects) {
-    lines.push(`  + ${object.type}: ${object.name}`);
-    lines.push(`    ID: ${object.externalId ?? '(not returned)'}`);
-    lines.push(`    URL: ${object.url ?? '(not returned)'}`);
+    const operation = operationByAction.get(object.actionId) ?? 'create';
+    lines.push(`+ ${operation} ${object.type}: ${object.name}`);
+    lines.push(`  ID: ${object.externalId ?? '(not returned)'}`);
+    lines.push(`  URL: ${object.url ?? '(not returned)'}`);
   }
+  if ((result.skippedActions?.length ?? 0) > 0) lines.push('', 'Skipped');
   for (const action of result.skippedActions ?? []) {
-    lines.push(`  = skipped ${action.type}: ${action.name} — ${action.reason}`);
-    if (action.externalId) lines.push(`    Existing ID: ${action.externalId}`);
-    if (action.url) lines.push(`    Existing URL: ${action.url}`);
+    lines.push(`= ${action.type}: ${action.name} — ${action.reason}`);
+    if (action.externalId) lines.push(`  Existing ID: ${action.externalId}`);
+    if (action.url) lines.push(`  Existing URL: ${action.url}`);
   }
-  for (const note of result.compatibilityNotes ?? []) lines.push(`  ~ compatibility: ${note}`);
-  for (const warning of result.warnings) lines.push(`  ! ${warning}`);
+  if ((result.compatibilityNotes?.length ?? 0) > 0) lines.push('', 'Compatibility');
+  for (const note of result.compatibilityNotes ?? []) lines.push(`~ ${note}`);
+  if (result.warnings.length > 0 || result.failures.length > 0) lines.push('', 'Diagnostics');
+  for (const warning of result.warnings) lines.push(`! ${warning}`);
   for (const failure of result.failures)
-    lines.push(`  X ${failure.code}: ${failure.summary}\n    Next: ${failure.nextAction}`);
-  return lines.join('\n');
+    lines.push(
+      `X ${failure.code}: ${failure.summary}`,
+      `  Cause: ${failure.probableCause}`,
+      `  Next: ${failure.nextAction}`,
+    );
+  if (result.warnings.length === 0 && result.failures.length === 0)
+    lines.push('', 'Diagnostics  none');
+  return renderPanel('Results', lines, options);
 }
 
 export function formatRecoveryPlan(plan: RecoveryPlan): string {
@@ -138,4 +170,9 @@ export function formatError(error: AurousError): string {
     `Next action: ${error.nextAction}`,
     ...(error.runId ? [`Run: ${error.runId}`] : []),
   ].join('\n');
+}
+
+function trimBlankEnd(lines: string[]): string[] {
+  while (lines.at(-1) === '') lines.pop();
+  return lines;
 }

@@ -5,6 +5,7 @@ import { AgentNameSchema, ToolNameSchema } from './domain/schemas.js';
 import { AurousServices } from './core/services.js';
 import { LocalRunStore } from './core/run-store.js';
 import { consoleOutput, type Output } from './core/output.js';
+import { formatApprovalPrompt } from './core/presentation.js';
 
 export interface CliDependencies {
   cwd?: string;
@@ -91,10 +92,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
         ...(!options.yes
           ? {
               confirm: () =>
-                confirm(
-                  'Execute exactly this saved plan through the configured MCP? Type "apply" to confirm: ',
-                  'apply',
-                ),
+                confirm('Execute exactly this saved plan through the configured MCP?', 'apply'),
             }
           : {}),
         signal: controller.signal,
@@ -121,10 +119,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
         ...(!options.yes
           ? {
               confirm: () =>
-                confirm(
-                  'Execute exactly this Linear plan through the official MCP? Type "apply" to confirm: ',
-                  'apply',
-                ),
+                confirm('Execute exactly this Linear plan through the official MCP?', 'apply'),
             }
           : {}),
         signal: controller.signal,
@@ -146,10 +141,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
       const expected = `recover ${runId}`;
       await services.applyRecovery(runId, {
         confirm: () =>
-          confirm(
-            `Execute exactly this recovery plan through the configured MCP? Type "${expected}" to confirm: `,
-            expected,
-          ),
+          confirm('Execute exactly this recovery plan through the configured MCP?', expected),
         signal: controller.signal,
       });
     });
@@ -176,7 +168,10 @@ async function confirmInTerminal(question: string, expected = 'apply'): Promise<
   if (!input.isTTY || !output.isTTY) return false;
   const reader = createInterface({ input, output });
   try {
-    return (await reader.question(question)).trim().toLowerCase() === expected.toLowerCase();
+    return (
+      (await reader.question(formatApprovalPrompt(question, expected))).trim().toLowerCase() ===
+      expected.toLowerCase()
+    );
   } finally {
     reader.close();
   }
