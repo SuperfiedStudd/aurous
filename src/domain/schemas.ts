@@ -44,12 +44,29 @@ export const ContextBundleSchema = z.object({
 });
 export type ContextBundle = z.infer<typeof ContextBundleSchema>;
 
-export const WorkspaceItemSchema = z.object({
-  kind: z.string().min(1),
-  name: z.string().min(1),
-  purpose: z.string().min(1),
-  parent: z.string().optional(),
+export interface WorkspaceItem {
+  kind: string;
+  name: string;
+  purpose: string;
+  parent?: string;
+}
+
+export const WorkspaceItemSchema = z
+  .object({
+    kind: z.string().min(1),
+    name: z.string().min(1),
+    purpose: z.string().min(1),
+    parent: z.string().min(1).nullish(),
+  })
+  .transform<WorkspaceItem>(({ parent, ...item }) =>
+    parent === null || parent === undefined ? item : { ...item, parent },
+  );
+
+export const ActionPropertyEntrySchema = z.object({
+  key: z.string().min(1),
+  value: z.string(),
 });
+export type ActionPropertyEntry = z.infer<typeof ActionPropertyEntrySchema>;
 
 export const PlanActionSchema = z.object({
   id: z.string().regex(/^action-[0-9]{3}$/),
@@ -57,7 +74,7 @@ export const PlanActionSchema = z.object({
   objectType: z.string().min(1),
   target: z.string().min(1),
   description: z.string().min(1),
-  properties: z.record(z.string(), z.unknown()).default({}),
+  properties: z.array(ActionPropertyEntrySchema).default([]),
   dependsOn: z.array(z.string()).default([]),
 });
 export type PlanAction = z.infer<typeof PlanActionSchema>;
@@ -78,6 +95,44 @@ export const PlanProposalSchema = z.object({
 });
 export type PlanProposal = z.infer<typeof PlanProposalSchema>;
 
+const PlanResponseWorkspaceItemSchema = z
+  .object({
+    kind: z.string(),
+    name: z.string(),
+    purpose: z.string(),
+    parent: z.string().nullable(),
+  })
+  .strict()
+  .transform<WorkspaceItem>(({ parent, ...item }) =>
+    parent === null ? item : { ...item, parent },
+  );
+
+const PlanResponseActionSchema = z
+  .object({
+    id: z.string(),
+    operation: z.enum(['create', 'update', 'link', 'configure']),
+    objectType: z.string(),
+    target: z.string(),
+    description: z.string(),
+    properties: z.array(z.object({ key: z.string(), value: z.string() }).strict()),
+    dependsOn: z.array(z.string()),
+  })
+  .strict();
+
+/** Matches planProposalJsonSchema exactly, then removes transport-only nulls. */
+export const PlanProposalResponseSchema = z
+  .object({
+    proposedWorkspaceStructure: z.array(PlanResponseWorkspaceItemSchema),
+    plannedActions: z.array(PlanResponseActionSchema),
+    assumptions: z.array(z.string()),
+    warnings: z.array(z.string()),
+    destructiveActions: z.array(
+      z.object({ actionId: z.string(), impact: z.string(), recovery: z.string() }).strict(),
+    ),
+    expectedResult: z.string(),
+  })
+  .strict();
+
 export const AurousPlanSchema = PlanProposalSchema.extend({
   schemaVersion: z.literal(1),
   runId: z.string().regex(/^run-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$/),
@@ -89,22 +144,50 @@ export const AurousPlanSchema = PlanProposalSchema.extend({
 });
 export type AurousPlan = z.infer<typeof AurousPlanSchema>;
 
-export const CreatedObjectSchema = z.object({
-  actionId: z.string(),
-  type: z.string(),
-  name: z.string(),
-  externalId: z.string().optional(),
-  url: z.string().url().optional(),
-});
+export interface CreatedObject {
+  actionId: string;
+  type: string;
+  name: string;
+  externalId?: string;
+  url?: string;
+}
 
-export const ExecutionFailureSchema = z.object({
-  actionId: z.string().optional(),
-  code: z.string().regex(/^AUR-[A-Z]+-[0-9]{3}$/),
-  summary: z.string(),
-  probableCause: z.string(),
-  nextAction: z.string(),
-  severity: SeveritySchema,
-});
+export const CreatedObjectSchema = z
+  .object({
+    actionId: z.string(),
+    type: z.string(),
+    name: z.string(),
+    externalId: z.string().nullish(),
+    url: z.string().url().nullish(),
+  })
+  .transform<CreatedObject>(({ externalId, url, ...object }) => ({
+    ...object,
+    ...(externalId === null || externalId === undefined ? {} : { externalId }),
+    ...(url === null || url === undefined ? {} : { url }),
+  }));
+
+export interface ExecutionFailure {
+  actionId?: string;
+  code: string;
+  summary: string;
+  probableCause: string;
+  nextAction: string;
+  severity: Severity;
+}
+
+export const ExecutionFailureSchema = z
+  .object({
+    actionId: z.string().nullish(),
+    code: z.string().regex(/^AUR-[A-Z]+-[0-9]{3}$/),
+    summary: z.string(),
+    probableCause: z.string(),
+    nextAction: z.string(),
+    severity: SeveritySchema,
+  })
+  .transform<ExecutionFailure>(({ actionId, ...failure }) => ({
+    ...failure,
+    ...(actionId === null || actionId === undefined ? {} : { actionId }),
+  }));
 
 export const ExecutionResultSchema = z.object({
   status: z.enum(['succeeded', 'partial', 'failed', 'cancelled']),
@@ -117,6 +200,50 @@ export const ExecutionResultSchema = z.object({
   finishedAt: z.string().datetime(),
 });
 export type ExecutionResult = z.infer<typeof ExecutionResultSchema>;
+
+const ExecutionResponseCreatedObjectSchema = z
+  .object({
+    actionId: z.string(),
+    type: z.string(),
+    name: z.string(),
+    externalId: z.string().nullable(),
+    url: z.string().nullable(),
+  })
+  .strict()
+  .transform<CreatedObject>(({ externalId, url, ...object }) => ({
+    ...object,
+    ...(externalId === null ? {} : { externalId }),
+    ...(url === null ? {} : { url }),
+  }));
+
+const ExecutionResponseFailureSchema = z
+  .object({
+    actionId: z.string().nullable(),
+    code: z.string(),
+    summary: z.string(),
+    probableCause: z.string(),
+    nextAction: z.string(),
+    severity: SeveritySchema,
+  })
+  .strict()
+  .transform<ExecutionFailure>(({ actionId, ...failure }) => ({
+    ...failure,
+    ...(actionId === null ? {} : { actionId }),
+  }));
+
+/** Matches executionResultJsonSchema exactly, then removes transport-only nulls. */
+export const ExecutionResultResponseSchema = z
+  .object({
+    status: z.enum(['succeeded', 'partial', 'failed', 'cancelled']),
+    summary: z.string(),
+    createdObjects: z.array(ExecutionResponseCreatedObjectSchema),
+    completedActionIds: z.array(z.string()),
+    warnings: z.array(z.string()),
+    failures: z.array(ExecutionResponseFailureSchema),
+    startedAt: z.string(),
+    finishedAt: z.string(),
+  })
+  .strict();
 
 export const RunStatusSchema = z.enum([
   'planning',

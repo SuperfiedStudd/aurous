@@ -1,7 +1,7 @@
 import { execa } from 'execa';
 import { AurousError } from '../../core/errors.js';
 import { redactText } from '../../core/redact.js';
-import { ExecutionResultSchema, PlanProposalSchema } from '../../domain/schemas.js';
+import { ExecutionResultResponseSchema, PlanProposalResponseSchema } from '../../domain/schemas.js';
 import { buildExecutionPrompt, buildPlanningPrompt } from './prompts.js';
 import { commandFailure, parseJsonPayload, writeManualPrompt } from './helpers.js';
 import type {
@@ -66,7 +66,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
   async generatePlan(input: PlanGenerationInput) {
     const prompt = buildPlanningPrompt(input.objective, input.context, input.productivity);
     await this.requireReady(input.runDirectory, 'plan', prompt);
-    return this.invoke(input, 'plan', prompt, (value) => PlanProposalSchema.parse(value));
+    return this.invoke(input, 'plan', prompt, (value) => PlanProposalResponseSchema.parse(value));
   }
 
   async executePlan(input: PlanExecutionInput) {
@@ -82,7 +82,9 @@ export class ClaudeAgentAdapter implements AgentAdapter {
         runId: input.plan.runId,
       });
     }
-    return this.invoke(input, 'apply', prompt, (value) => ExecutionResultSchema.parse(value));
+    return this.invoke(input, 'apply', prompt, (value) =>
+      ExecutionResultResponseSchema.parse(value),
+    );
   }
 
   manualFallback(runDirectory: string, phase: 'plan' | 'apply', prompt: string): Promise<string> {

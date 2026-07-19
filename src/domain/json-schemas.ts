@@ -1,3 +1,9 @@
+/**
+ * Codex `--output-schema` accepts the OpenAI Structured Outputs subset of JSON Schema.
+ * Every object is closed and requires every declared property. Optional application fields are
+ * represented as required nullable values, then normalized by the Zod schemas at the boundary.
+ * Runtime-only constraints (patterns, formats, minimum lengths/items) stay in Zod.
+ */
 export const planProposalJsonSchema = {
   type: 'object',
   additionalProperties: false,
@@ -12,22 +18,20 @@ export const planProposalJsonSchema = {
   properties: {
     proposedWorkspaceStructure: {
       type: 'array',
-      minItems: 1,
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['kind', 'name', 'purpose'],
+        required: ['kind', 'name', 'purpose', 'parent'],
         properties: {
           kind: { type: 'string' },
           name: { type: 'string' },
           purpose: { type: 'string' },
-          parent: { type: 'string' },
+          parent: { type: ['string', 'null'] },
         },
       },
     },
     plannedActions: {
       type: 'array',
-      minItems: 1,
       items: {
         type: 'object',
         additionalProperties: false,
@@ -41,12 +45,23 @@ export const planProposalJsonSchema = {
           'dependsOn',
         ],
         properties: {
-          id: { type: 'string', pattern: '^action-[0-9]{3}$' },
-          operation: { enum: ['create', 'update', 'link', 'configure'] },
+          id: { type: 'string' },
+          operation: { type: 'string', enum: ['create', 'update', 'link', 'configure'] },
           objectType: { type: 'string' },
           target: { type: 'string' },
           description: { type: 'string' },
-          properties: { type: 'object', additionalProperties: true },
+          properties: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['key', 'value'],
+              properties: {
+                key: { type: 'string' },
+                value: { type: 'string' },
+              },
+            },
+          },
           dependsOn: { type: 'array', items: { type: 'string' } },
         },
       },
@@ -84,20 +99,20 @@ export const executionResultJsonSchema = {
     'finishedAt',
   ],
   properties: {
-    status: { enum: ['succeeded', 'partial', 'failed', 'cancelled'] },
+    status: { type: 'string', enum: ['succeeded', 'partial', 'failed', 'cancelled'] },
     summary: { type: 'string' },
     createdObjects: {
       type: 'array',
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['actionId', 'type', 'name'],
+        required: ['actionId', 'type', 'name', 'externalId', 'url'],
         properties: {
           actionId: { type: 'string' },
           type: { type: 'string' },
           name: { type: 'string' },
-          externalId: { type: 'string' },
-          url: { type: 'string' },
+          externalId: { type: ['string', 'null'] },
+          url: { type: ['string', 'null'] },
         },
       },
     },
@@ -108,18 +123,18 @@ export const executionResultJsonSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['code', 'summary', 'probableCause', 'nextAction', 'severity'],
+        required: ['actionId', 'code', 'summary', 'probableCause', 'nextAction', 'severity'],
         properties: {
-          actionId: { type: 'string' },
-          code: { type: 'string', pattern: '^AUR-[A-Z]+-[0-9]{3}$' },
+          actionId: { type: ['string', 'null'] },
+          code: { type: 'string' },
           summary: { type: 'string' },
           probableCause: { type: 'string' },
           nextAction: { type: 'string' },
-          severity: { enum: ['warning', 'recoverable', 'fatal'] },
+          severity: { type: 'string', enum: ['warning', 'recoverable', 'fatal'] },
         },
       },
     },
-    startedAt: { type: 'string', format: 'date-time' },
-    finishedAt: { type: 'string', format: 'date-time' },
+    startedAt: { type: 'string' },
+    finishedAt: { type: 'string' },
   },
 } as const;
