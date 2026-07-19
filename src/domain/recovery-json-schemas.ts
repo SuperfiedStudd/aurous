@@ -8,6 +8,42 @@ const capabilitySchema = {
   },
 } as const;
 
+const filterFingerprintSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['nodes'],
+  properties: {
+    nodes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['path', 'kind', 'property', 'operator', 'value'],
+        properties: {
+          path: { type: 'string' },
+          kind: { type: 'string', enum: ['and', 'or', 'condition'] },
+          property: { type: ['string', 'null'] },
+          operator: { type: ['string', 'null'] },
+          value: { type: ['string', 'null'] },
+        },
+      },
+    },
+  },
+} as const;
+
+const filterStateSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['kind', 'conditionCount', 'fingerprint'],
+  properties: {
+    kind: { type: 'string', enum: ['none', 'configured', 'unknown'] },
+    conditionCount: { type: ['number', 'null'] },
+    fingerprint: {
+      anyOf: [filterFingerprintSchema, { type: 'null' }],
+    },
+  },
+} as const;
+
 export const recoveryInspectionJsonSchema = {
   type: 'object',
   additionalProperties: false,
@@ -63,11 +99,11 @@ export const recoveryInspectionJsonSchema = {
             items: {
               type: 'object',
               additionalProperties: false,
-              required: ['name', 'type', 'filterSummary'],
+              required: ['name', 'type', 'filterState'],
               properties: {
                 name: { type: 'string' },
                 type: { type: 'string' },
-                filterSummary: { type: ['string', 'null'] },
+                filterState: filterStateSchema,
               },
             },
           },
