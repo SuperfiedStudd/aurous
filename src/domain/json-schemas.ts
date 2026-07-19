@@ -126,7 +126,11 @@ export const executionResultJsonSchema = {
         required: ['actionId', 'code', 'summary', 'probableCause', 'nextAction', 'severity'],
         properties: {
           actionId: { type: ['string', 'null'] },
-          code: { type: 'string' },
+          code: {
+            type: 'string',
+            description:
+              'Canonical Aurous code formatted AUR-<SINGLE-UPPERCASE-CATEGORY>-<3 DIGITS>, for example AUR-MCP-001 or AUR-RECOVERY-011.',
+          },
           summary: { type: 'string' },
           probableCause: { type: 'string' },
           nextAction: { type: 'string' },

@@ -1,9 +1,11 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { executionResultJsonSchema, planProposalJsonSchema } from '../src/domain/json-schemas.js';
 import {
   AurousPlanSchema,
   ExecutionResultResponseSchema,
   ExecutionResultSchema,
+  parseExecutionResultResponse,
   PlanProposalResponseSchema,
   PlanProposalSchema,
 } from '../src/domain/schemas.js';
@@ -106,6 +108,74 @@ describe('Codex structured-output JSON schemas', () => {
       name: 'Product HQ',
     });
     expect(result.failures[0]).not.toHaveProperty('actionId');
+  });
+
+  it('normalizes the captured malformed action-003 failure without discarding its result', async () => {
+    const captured = JSON.parse(
+      await readFile(
+        new URL('./fixtures/recovery-action-003-malformed.json', import.meta.url),
+        'utf8',
+      ),
+    ) as unknown;
+
+    const parsed = parseExecutionResultResponse(captured);
+
+    expect(parsed.result).toMatchObject({
+      status: 'cancelled',
+      completedActionIds: [],
+      createdObjects: [
+        {
+          actionId: 'action-003',
+          externalId: '7f965334-0f81-4d4c-966b-6b3d9d969fa2',
+        },
+      ],
+      failures: [{ actionId: 'action-003', code: 'AUR-AGENT-005' }],
+    });
+    expect(parsed.diagnostics).toEqual([
+      {
+        kind: 'malformed-failure-code',
+        validationPath: ['failures', 0, 'code'],
+        actionId: 'action-003',
+        originalMalformedCode: 'AUR-RECOVERY-CANCELLED',
+        canonicalCode: 'AUR-AGENT-005',
+      },
+    ]);
+  });
+
+  it('preserves canonical failure codes and fails closed for genuinely invalid results', () => {
+    const canonical = {
+      status: 'failed',
+      summary: 'Canonical failure.',
+      createdObjects: [],
+      completedActionIds: [],
+      warnings: [],
+      failures: [
+        {
+          actionId: 'action-003',
+          code: 'AUR-MCP-123',
+          summary: 'MCP failed.',
+          probableCause: 'Test.',
+          nextAction: 'Inspect.',
+          severity: 'recoverable',
+        },
+      ],
+      startedAt: '2026-07-19T02:57:24Z',
+      finishedAt: '2026-07-19T02:57:24Z',
+    };
+
+    expect(parseExecutionResultResponse(canonical)).toMatchObject({
+      result: { failures: [{ code: 'AUR-MCP-123' }] },
+      diagnostics: [],
+    });
+    expect(() =>
+      parseExecutionResultResponse({ ...canonical, completedActionIds: undefined }),
+    ).toThrow();
+  });
+
+  it('documents the canonical failure-code contract without unsupported JSON Schema patterns', () => {
+    const serialized = JSON.stringify(executionResultJsonSchema);
+    expect(serialized).toContain('AUR-<SINGLE-UPPERCASE-CATEGORY>-<3 DIGITS>');
+    expect(serialized).not.toContain('"pattern"');
   });
 });
 

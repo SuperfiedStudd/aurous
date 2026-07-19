@@ -1,7 +1,12 @@
 import { execa } from 'execa';
 import { AurousError } from '../../core/errors.js';
 import { redactText } from '../../core/redact.js';
-import { ExecutionResultResponseSchema, PlanProposalResponseSchema } from '../../domain/schemas.js';
+import {
+  PlanProposalResponseSchema,
+  parseExecutionResultResponse,
+  type ExecutionResult,
+  type ParsedExecutionResult,
+} from '../../domain/schemas.js';
 import { RecoveryInspectionSchema } from '../../domain/recovery.js';
 import {
   buildExecutionPrompt,
@@ -90,9 +95,8 @@ export class ClaudeAgentAdapter implements AgentAdapter {
         runId: input.plan.runId,
       });
     }
-    return this.invoke(input, 'apply', prompt, (value) =>
-      ExecutionResultResponseSchema.parse(value),
-    );
+    const invocation = await this.invoke(input, 'apply', prompt, parseExecutionResultResponse);
+    return normalizeExecutionInvocation(invocation);
   }
 
   async inspectRecovery(input: RecoveryInspectionInput) {
@@ -123,9 +127,13 @@ export class ClaudeAgentAdapter implements AgentAdapter {
       input.recoveryPlan.tool,
       input.recoveryPlan.recoveryRunId,
     );
-    return this.invoke(input, 'recover-apply', prompt, (value) =>
-      ExecutionResultResponseSchema.parse(value),
+    const invocation = await this.invoke(
+      input,
+      'recover-apply',
+      prompt,
+      parseExecutionResultResponse,
     );
+    return normalizeExecutionInvocation(invocation);
   }
 
   manualFallback(runDirectory: string, phase: AgentPhase, prompt: string): Promise<string> {
@@ -234,6 +242,17 @@ export class ClaudeAgentAdapter implements AgentAdapter {
       durationMs,
     };
   }
+}
+
+function normalizeExecutionInvocation(
+  invocation: InvocationRecord<ParsedExecutionResult>,
+): InvocationRecord<ExecutionResult> {
+  const { value, ...record } = invocation;
+  return {
+    ...record,
+    value: value.result,
+    ...(value.diagnostics.length > 0 ? { boundaryDiagnostics: value.diagnostics } : {}),
+  };
 }
 
 function invocationRunId(
