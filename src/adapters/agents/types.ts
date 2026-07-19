@@ -40,6 +40,7 @@ export interface PlanGenerationInput {
   context: ContextBundle;
   productivity: ProductivityAdapter;
   timeoutMs: number;
+  model?: string;
   signal?: AbortSignal;
 }
 
@@ -49,6 +50,7 @@ export interface PlanExecutionInput {
   plan: AurousPlan;
   productivity: ProductivityAdapter;
   timeoutMs: number;
+  model?: string;
   signal?: AbortSignal;
 }
 

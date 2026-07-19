@@ -12,6 +12,32 @@ No AI, Notion, or Linear credentials are requested, copied, or stored by Aurous.
 
 Mock mode needs no external authentication and exercises the complete workflow.
 
+## Interactive shell
+
+Launch the persistent Aurous experience with either command:
+
+```bash
+aurous
+# During development:
+npm run dev -- shell
+```
+
+The shell keeps the gold Aurous header, active agent/model, target, project, selected context, preset, team, and latest run visible. Its readline composer supports normal terminal editing, Up/Down command history, Home/End navigation, Ctrl+C, and graceful EOF/exit behavior. Output uses terminal scrollback above the next composer instead of taking over the screen.
+
+Start with configuration commands when needed, then ask naturally:
+
+```text
+/agent codex
+/model gpt-5.6
+/target linear JasjyotSingh
+/context demo/linear-build-week.json
+Set up Linear for this project using my current context
+```
+
+A natural-language request selects an explicitly named Notion or Linear target, generates and saves the existing Aurous plan, prints the complete preview, requires the same typed `apply` approval, executes through the existing adapter, records the result, and returns to the composer. The shell starts with the current project (`.`) visible as its context; use `/context` before planning to narrow or replace it.
+
+Available slash commands are `/help`, `/agent`, `/model`, `/target`, `/context`, `/preset`, `/plan`, `/apply`, `/runs`, `/status`, `/clear`, and `/exit`. Run `/help` inside the shell for accepted arguments.
+
 ## Install
 
 ```bash
@@ -67,6 +93,7 @@ Recovery has no `--yes` bypass. It fetches only persisted external IDs, never se
 
 | Command                                | Purpose                                                                |
 | -------------------------------------- | ---------------------------------------------------------------------- |
+| `aurous` or `aurous shell`             | Open the persistent interactive shell                                  |
 | `aurous init`                          | Create local `.aurous/config.json` state without credentials           |
 | `aurous doctor [--verbose]`            | Check runtime, agent installations, auth, and MCP readiness            |
 | `aurous plan ...`                      | Read only the provided context paths and create a validated saved plan |

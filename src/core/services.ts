@@ -62,6 +62,8 @@ export interface PlanOptions {
   tool?: string;
   contextPaths: string[];
   objective: string;
+  model?: string;
+  embedded?: boolean;
   timeoutMs?: number;
   signal?: AbortSignal;
 }
@@ -70,6 +72,8 @@ export interface ApplyOptions {
   confirmed: boolean;
   confirm?: () => Promise<boolean>;
   alreadyPreviewed?: boolean;
+  model?: string;
+  embedded?: boolean;
   signal?: AbortSignal;
 }
 
@@ -77,6 +81,8 @@ export interface LinearDemoPlanOptions {
   agent?: string;
   team: string;
   contextPaths: string[];
+  model?: string;
+  embedded?: boolean;
 }
 
 export interface RecoverOptions {
@@ -175,15 +181,16 @@ export class AurousServices {
     }
     const runId = createRunId(this.now());
     const timestamp = this.now().toISOString();
-    this.dependencies.output.log(
-      formatOpeningHeader({
-        agent: agentName,
-        target: toolName,
-        mode: 'Planning',
-        runId,
-        ...(agentName === 'mock' ? { model: 'built-in deterministic adapter' } : {}),
-      }),
-    );
+    if (!options.embedded)
+      this.dependencies.output.log(
+        formatOpeningHeader({
+          agent: agentName,
+          target: toolName,
+          mode: 'Planning',
+          runId,
+          model: options.model ?? modelDisplayName(agentName),
+        }),
+      );
     const context = await ingestContext({
       cwd: this.dependencies.workspace,
       paths: options.contextPaths,
@@ -220,6 +227,7 @@ export class AurousServices {
           context,
           productivity,
           timeoutMs: options.timeoutMs ?? config.timeoutMs,
+          ...(options.model ? { model: options.model } : {}),
           ...(options.signal ? { signal: options.signal } : {}),
         }),
       );
@@ -296,15 +304,16 @@ export class AurousServices {
     }
     const runId = createRunId(this.now());
     const timestamp = this.now().toISOString();
-    this.dependencies.output.log(
-      formatOpeningHeader({
-        agent: agentName,
-        target: 'linear',
-        mode: 'Demo',
-        runId,
-        ...(agentName === 'mock' ? { model: 'built-in deterministic adapter' } : {}),
-      }),
-    );
+    if (!options.embedded)
+      this.dependencies.output.log(
+        formatOpeningHeader({
+          agent: agentName,
+          target: 'linear',
+          mode: 'Demo',
+          runId,
+          model: options.model ?? modelDisplayName(agentName),
+        }),
+      );
     const context = await ingestContext({
       cwd: this.dependencies.workspace,
       paths: options.contextPaths,
@@ -451,15 +460,16 @@ export class AurousServices {
       });
     }
     if (!options.alreadyPreviewed) {
-      this.dependencies.output.log(
-        formatOpeningHeader({
-          agent: plan.agent,
-          target: plan.tool,
-          mode: 'Approval',
-          runId,
-          ...(plan.agent === 'mock' ? { model: 'built-in deterministic adapter' } : {}),
-        }),
-      );
+      if (!options.embedded)
+        this.dependencies.output.log(
+          formatOpeningHeader({
+            agent: plan.agent,
+            target: plan.tool,
+            mode: 'Approval',
+            runId,
+            model: options.model ?? modelDisplayName(plan.agent),
+          }),
+        );
       this.dependencies.output.log(`\n${formatPlan(plan)}`);
     }
     const confirmed = options.confirmed || (options.confirm ? await options.confirm() : false);
@@ -504,6 +514,7 @@ export class AurousServices {
           plan,
           productivity,
           timeoutMs: config.timeoutMs,
+          ...(options.model ? { model: options.model } : {}),
           ...(options.signal ? { signal: options.signal } : {}),
         }),
       );
@@ -1259,6 +1270,10 @@ function progressWordFor(phase: string): ProgressWord {
   if (phase.includes('plan') || phase.includes('inspection') || phase.includes('verification'))
     return 'Assaying';
   return 'Polishing';
+}
+
+function modelDisplayName(agent: AgentName): string {
+  return agent === 'mock' ? 'built-in deterministic adapter' : 'auto';
 }
 
 function parseRecoveryActionBoundary(

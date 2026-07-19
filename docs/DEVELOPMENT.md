@@ -16,6 +16,7 @@ The package is ESM TypeScript. `npm run dev -- <command>` runs source through `t
 | Command                 | Purpose                           |
 | ----------------------- | --------------------------------- |
 | `npm run dev -- --help` | Run the development CLI           |
+| `npm run dev -- shell`  | Run the interactive shell         |
 | `npm run format:check`  | Check Prettier formatting         |
 | `npm run lint`          | Run type-aware ESLint             |
 | `npm run typecheck`     | Check TypeScript without emitting |

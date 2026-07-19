@@ -23,6 +23,8 @@ explicit paths -> guarded context ingestion -> context preview
 ## Modules
 
 - `src/cli.ts` defines the user commands and terminal confirmation.
+- `src/core/shell.ts` owns the persistent readline session, slash-command state, natural-language target routing, composer loop, and graceful cancellation. It delegates every plan, apply, run, and diagnostic operation to `AurousServices`.
+- `src/core/presentation.ts` renders the adaptive gold header, framed regions, shell metadata, composer, approval, progress, and no-color fallbacks.
 - `src/core/context.ts` is the path allowlist and context budget boundary.
 - `src/domain/schemas.ts` and `src/domain/recovery.ts` define versioned Zod contracts for plans, results, runs, diagnostics, exact-ID inspection, recovery classifications, and checkpoints.
 - `src/domain/linear-demo.ts` validates the minimal structured demo context and deterministically maps it to an explicit Linear plan.
@@ -51,6 +53,10 @@ logs/*.json                 redacted stdout/stderr captures
 `.aurous/` is gitignored. Writes use restrictive file modes and JSON files are replaced atomically.
 
 ## Plan and apply contracts
+
+The default command and `shell` command add a persistent orchestration layer around these contracts. The shell starts with the current project path visible, validates `/context` selections through the same guarded ingestion boundary, and routes explicit mentions of Linear or Notion without generating a second plan format. Natural requests call the existing plan method followed by the existing saved-plan apply method; `/plan` and `/apply` expose those phases separately. A plan always returns to the shell before further input, and no execution begins until the existing typed approval callback succeeds.
+
+Readline provides character editing and bounded duplicate-free history while normal terminal scrollback remains the output surface. The shell is not a full-screen TUI and has no alternate-screen state. Model selection is session-local: `auto` preserves the agent CLI default, while an explicit value is passed as one argument to the supported Codex or Claude Code model flag. Unsupported Claude Code model selection fails visibly before invocation.
 
 Planning sends an embedded copy of selected context to the chosen local agent. It instructs the agent not to call tools or MCPs; Codex runs with a read-only sandbox and Claude Code disables tools when its inspected help advertises that flag. The returned proposal must pass both the Zod shape and semantic checks for sequential IDs, valid dependencies, and disclosed destructive actions.
 
@@ -86,12 +92,12 @@ The productivity adapter supplies tool-native structure while the agent adapter 
 
 ## Error model
 
-Errors carry a stable code, severity, summary, probable cause, and next action. Categories currently include `AUR-CTX`, `AUR-STATE`, `AUR-PLAN`, `AUR-AGENT`, `AUR-MCP`, `AUR-APPLY`, `AUR-RECOVERY`, `AUR-TOOL`, and `AUR-CORE`. Diagnostics are safe to paste back into Codex after redaction, but users should still review output before sharing it.
+Errors carry a stable code, severity, summary, probable cause, and next action. Categories currently include `AUR-CTX`, `AUR-STATE`, `AUR-PLAN`, `AUR-AGENT`, `AUR-MCP`, `AUR-APPLY`, `AUR-RECOVERY`, `AUR-SHELL`, `AUR-TOOL`, and `AUR-CORE`. Diagnostics are safe to paste back into Codex after redaction, but users should still review output before sharing it.
 
 ## Security invariants
 
 - No AI subscription, Notion, or Linear credential is read or stored.
-- No implicit path scanning: every context root comes from `--context`.
+- Every context root is visible before planning: commands receive `--context`, while the shell starts at the visible current project (`.`) and `/context` validates any replacement before use.
 - Symlinks are skipped; `.git`, `.aurous`, dependencies, build outputs, secret-like filenames, env files, large files, and known binary formats are excluded.
 - Context has per-file, total-byte, and file-count budgets.
 - Prompts are passed over stdin, not command-line arguments.

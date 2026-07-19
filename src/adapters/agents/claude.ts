@@ -192,6 +192,19 @@ export class ClaudeAgentAdapter implements AgentAdapter {
   ): Promise<InvocationRecord<T>> {
     const help = await execa('claude', ['--help'], { reject: false, timeout: 15_000 });
     const args = ['--print', '--output-format', 'json'];
+    const model = 'model' in input ? input.model : undefined;
+    if (model) {
+      if (!help.stdout.includes('--model')) {
+        throw new AurousError({
+          code: 'AUR-AGENT-008',
+          summary: 'This Claude Code installation does not support model selection.',
+          probableCause: 'The installed CLI does not advertise the --model option.',
+          nextAction: 'Run "/model auto" in the Aurous shell or update Claude Code.',
+          runId: invocationRunId(input),
+        });
+      }
+      args.push('--model', model);
+    }
     if (phase === 'plan' && help.stdout.includes('--tools')) args.push('--tools', '');
     const started = Date.now();
     let result;

@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { formatExecutionResult, formatPlan } from '../src/core/output.js';
 import {
   formatApprovalPrompt,
+  formatComposerFrame,
+  formatComposerPrompt,
   formatOpeningHeader,
   formatProgress,
   progressWords,
+  formatShellStatus,
   stripAnsi,
 } from '../src/core/presentation.js';
 import type { AurousPlan, ExecutionResult } from '../src/domain/schemas.js';
@@ -152,6 +155,34 @@ describe('CLI presentation', () => {
     expect(rendered).toContain('+');
     expect(rendered).toContain('agent Claude Code  ·  target Notion  ·  mode Planning');
     expect(approval).toContain('Type apply to confirm.');
+  });
+
+  it.each([80, 120])('keeps shell status and the composer within %i columns', (width) => {
+    const rendered = [
+      formatShellStatus(
+        {
+          agent: 'codex',
+          model: 'gpt-5.6',
+          target: 'linear',
+          mode: 'Ready',
+          project: 'aurous',
+          contextPaths: ['demo/linear-build-week.json'],
+          preset: 'software-launch',
+          linearTeam: 'JasjyotSingh',
+          lastRunId: plan.runId,
+        },
+        { width, color: false, unicode: false },
+      ),
+      formatComposerFrame({ width, color: false, unicode: false }),
+      formatComposerPrompt({ width, color: false, unicode: false }),
+    ].join('\n');
+
+    expect(rendered).not.toContain('\u001b');
+    expect(rendered).toContain('agent    Codex  ·  model gpt-5.6');
+    expect(rendered).toContain('aurous ›');
+    expect(Math.max(...rendered.split('\n').map((line) => line.length))).toBeLessThanOrEqual(
+      Math.min(width, 108),
+    );
   });
 
   it('uses only the approved one-word refinement vocabulary for progress states', () => {

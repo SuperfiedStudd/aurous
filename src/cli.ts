@@ -6,19 +6,22 @@ import { AurousServices } from './core/services.js';
 import { LocalRunStore } from './core/run-store.js';
 import { consoleOutput, type Output } from './core/output.js';
 import { formatApprovalPrompt } from './core/presentation.js';
+import { AurousShell, type ShellIO } from './core/shell.js';
 
 export interface CliDependencies {
   cwd?: string;
   output?: Output;
   confirm?: (question: string, expected?: string) => Promise<boolean>;
+  shellIO?: ShellIO;
 }
 
 export function createCli(dependencies: CliDependencies = {}): Command {
   const cwd = dependencies.cwd ?? process.cwd();
   const cliOutput = dependencies.output ?? consoleOutput;
+  const store = new LocalRunStore(cwd);
   const services = new AurousServices({
     workspace: cwd,
-    store: new LocalRunStore(cwd),
+    store,
     output: cliOutput,
   });
   const confirm = dependencies.confirm ?? confirmInTerminal;
@@ -28,7 +31,27 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .description(
       'Plan and build productivity workspaces through your local AI agent and configured MCPs.',
     )
-    .version('0.1.0');
+    .version('0.1.0')
+    .action(async () => {
+      await launchShell();
+    });
+
+  const launchShell = async () => {
+    await new AurousShell({
+      workspace: cwd,
+      store,
+      services,
+      output: cliOutput,
+      ...(dependencies.shellIO ? { io: dependencies.shellIO } : {}),
+    }).run();
+  };
+
+  program
+    .command('shell')
+    .description('Open the persistent interactive Aurous shell.')
+    .action(async () => {
+      await launchShell();
+    });
 
   program
     .command('init')

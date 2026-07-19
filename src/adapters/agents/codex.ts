@@ -220,7 +220,13 @@ export class CodexAgentAdapter implements AgentAdapter {
       encoding: 'utf8',
       mode: 0o600,
     });
-    const args = buildCodexInvocationArgs(phase, schemaPath, outputPath, executionTool(input));
+    const args = buildCodexInvocationArgs(
+      phase,
+      schemaPath,
+      outputPath,
+      executionTool(input),
+      'model' in input ? input.model : undefined,
+    );
     const started = Date.now();
     let result;
     try {
@@ -311,8 +317,10 @@ export function buildCodexInvocationArgs(
   schemaPath: string,
   outputPath: string,
   executionTool?: 'notion' | 'linear' | 'mock',
+  model?: string,
 ): string[] {
   const args = ['exec', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only'];
+  if (model) args.push('--model', model);
   if (
     (phase === 'apply' || phase === 'recover-apply') &&
     executionTool &&

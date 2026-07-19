@@ -24,6 +24,18 @@ export interface RuntimeMetadata {
   model?: string;
 }
 
+export interface ShellStatusMetadata {
+  agent: AgentName;
+  model: string;
+  target: ToolName;
+  mode: string;
+  project: string;
+  contextPaths: string[];
+  preset?: string;
+  linearTeam?: string;
+  lastRunId?: string;
+}
+
 interface ResolvedRenderOptions {
   width: number;
   color: boolean;
@@ -106,11 +118,57 @@ export function formatApprovalPrompt(
   expected: string,
   options: RenderOptions = {},
 ): string {
-  return `${renderPanel('Approval', [question, '', `Type ${expected} to confirm.`], options)}\n${gold('›', resolveRenderOptions(options), true)} `;
+  return `${formatApprovalRequest(question, expected, options)}\n${formatInputPrompt('approval', options)}`;
+}
+
+export function formatApprovalRequest(
+  question: string,
+  expected: string,
+  options: RenderOptions = {},
+): string {
+  return renderPanel('Approval', [question, '', `Type ${expected} to confirm.`], options);
 }
 
 export function formatApprovalReceipt(detail: string, options: RenderOptions = {}): string {
   return renderPanel('Approval', [`✓ ${detail}`], options);
+}
+
+export function formatShellStatus(
+  metadata: ShellStatusMetadata,
+  options: RenderOptions = {},
+): string {
+  return renderPanel(
+    'Session',
+    [
+      `agent    ${agentDisplayName(metadata.agent)}  ·  model ${metadata.model}`,
+      `target   ${toolDisplayName(metadata.target)}  ·  mode ${metadata.mode}`,
+      `project  ${metadata.project}`,
+      `context  ${metadata.contextPaths.join(', ')}`,
+      ...(metadata.preset ? [`preset   ${metadata.preset}`] : []),
+      ...(metadata.linearTeam ? [`team     ${metadata.linearTeam}`] : []),
+      ...(metadata.lastRunId ? [`run      ${metadata.lastRunId}`] : []),
+    ],
+    options,
+  );
+}
+
+export function formatComposerFrame(options: RenderOptions = {}): string {
+  const resolved = resolveRenderOptions(options);
+  return renderPanel(
+    'Request',
+    [
+      `Ask Aurous to set up your workspace, or type /help.  ${resolved.unicode ? '↑↓' : 'Up/Down'} history · Ctrl+C exit`,
+    ],
+    resolved,
+  );
+}
+
+export function formatComposerPrompt(options: RenderOptions = {}): string {
+  return formatInputPrompt('aurous', options);
+}
+
+export function formatInputPrompt(label: string, options: RenderOptions = {}): string {
+  return `${gold(`${label} ›`, resolveRenderOptions(options), true)} `;
 }
 
 export function formatPlainNotice(

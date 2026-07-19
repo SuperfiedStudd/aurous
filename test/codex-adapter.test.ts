@@ -30,6 +30,20 @@ describe('Codex invocation permissions', () => {
     expect(args.join(' ')).not.toContain('mcp_servers.notion');
   });
 
+  it('passes an explicitly selected shell model as one argv value', () => {
+    const args = buildCodexInvocationArgs(
+      'plan',
+      '/tmp/schema.json',
+      '/tmp/output.json',
+      undefined,
+      'gpt-5.6',
+    );
+
+    expect(args).toContain('--model');
+    expect(args[args.indexOf('--model') + 1]).toBe('gpt-5.6');
+    expect(args).not.toContain('--strict-config');
+  });
+
   it.each(['notion', 'linear'] as const)(
     'pre-approves only the selected %s MCP for one approved recovery action',
     (tool) => {
