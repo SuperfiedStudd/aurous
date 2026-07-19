@@ -9,12 +9,14 @@ import {
   AgentNameSchema,
   AurousPlanSchema,
   ExecutionResultSchema,
+  normalizeExecutionResultBoundary,
   PlanProposalSchema,
   ToolNameSchema,
   type AgentName,
   type AurousConfig,
   type AurousPlan,
   type DiagnosticEvent,
+  type ExecutionBoundaryDiagnostic,
   type ExecutionResult,
   type RunRecord,
 } from '../domain/schemas.js';
@@ -727,6 +729,7 @@ export class AurousServices {
     let warnings: string[] = [];
     let failures: ExecutionResult['failures'] = [];
     let invocationInProgress = false;
+    let activeActionId: string | undefined;
 
     try {
       for (const action of recoveryPlan.plannedActions) {
@@ -741,6 +744,7 @@ export class AurousServices {
           });
         }
         invocationInProgress = true;
+        activeActionId = action.id;
         const invocation = await this.withProgress(
           `recovery action ${action.id}`,
           options.signal,
@@ -756,13 +760,50 @@ export class AurousServices {
               ...(options.signal ? { signal: options.signal } : {}),
             }),
         );
-        const actionResult = ExecutionResultSchema.parse(invocation.value);
+        const normalized = parseRecoveryActionBoundary(
+          invocation.value,
+          invocation.boundaryDiagnostics,
+          recoveryRunId,
+          action.id,
+        );
+        const boundaryDiagnostics = normalized.diagnostics;
+        await this.dependencies.store.saveCommandLog(
+          recoveryRunId,
+          `recovery-action-${action.id}`,
+          sanitizeBoundaryText(invocation.stdout, boundaryDiagnostics),
+          sanitizeBoundaryText(invocation.stderr, boundaryDiagnostics),
+        );
+        for (const diagnostic of boundaryDiagnostics) {
+          await this.event(
+            recoveryRunId,
+            'error',
+            diagnostic.canonicalCode,
+            'Malformed agent failure code normalized at the recovery action-result boundary.',
+            redactValue({
+              actionId: diagnostic.actionId ?? action.id,
+              rawValidationPath: diagnostic.validationPath,
+              canonicalCode: diagnostic.canonicalCode,
+              originalMalformedCode: diagnostic.originalMalformedCode,
+              ambiguousWrite: true,
+              originalRunId: recoveryPlan.originalRunId,
+            }),
+          );
+        }
+        const actionResult = normalized.result;
         validateRecoveryActionResult(recoveryPlan, action, actionResult);
         createdObjects = mergeCreatedObjects(createdObjects, actionResult.createdObjects);
         completedActionIds = [
           ...new Set([...completedActionIds, ...actionResult.completedActionIds]),
         ];
-        warnings = [...warnings, ...actionResult.warnings];
+        warnings = [
+          ...warnings,
+          ...actionResult.warnings,
+          ...(boundaryDiagnostics.length > 0
+            ? [
+                `Recovery action ${action.id} returned a malformed failure code. Aurous normalized it to AUR-AGENT-005; external write completion remains ambiguous.`,
+              ]
+            : []),
+        ];
         failures = [...failures, ...actionResult.failures];
         for (const object of actionResult.createdObjects) {
           if (!object.externalId) continue;
@@ -779,15 +820,12 @@ export class AurousServices {
           });
         }
         invocationInProgress = false;
-        await this.dependencies.store.saveCommandLog(
-          recoveryRunId,
-          `recovery-action-${action.id}`,
-          invocation.stdout,
-          invocation.stderr,
-        );
         const intermediate: ExecutionResult = {
           status: 'partial',
-          summary: `Recovery checkpoint persisted after ${action.id}.`,
+          summary:
+            boundaryDiagnostics.length > 0
+              ? `Recovery action ${action.id} returned malformed boundary data; its exact object identity was checkpointed, but write completion remains ambiguous.`
+              : `Recovery checkpoint persisted after ${action.id}.`,
           createdObjects,
           completedActionIds,
           warnings,
@@ -805,6 +843,7 @@ export class AurousServices {
             status: actionResult.status,
             command: invocation.command,
             durationMs: invocation.durationMs,
+            ambiguousWrite: boundaryDiagnostics.length > 0,
           },
         );
         if (actionResult.status !== 'succeeded') {
@@ -812,6 +851,7 @@ export class AurousServices {
           this.dependencies.output.log(formatExecutionResult(intermediate));
           return intermediate;
         }
+        activeActionId = undefined;
       }
       const result: ExecutionResult = {
         status: 'succeeded',
@@ -872,6 +912,7 @@ export class AurousServices {
       await this.dependencies.store.updateStatus(recoveryRunId, finalStatus);
       await this.event(recoveryRunId, 'error', classified.code, failedResult.summary, {
         ambiguousWrite,
+        ...(activeActionId ? { actionId: activeActionId } : {}),
         originalRunId: recoveryPlan.originalRunId,
       });
       throw classified;
@@ -977,6 +1018,46 @@ export class AurousServices {
       metadata,
     });
   }
+}
+
+function parseRecoveryActionBoundary(
+  value: unknown,
+  adapterDiagnostics: ExecutionBoundaryDiagnostic[] | undefined,
+  recoveryRunId: string,
+  actionId: string,
+): { result: ExecutionResult; diagnostics: ExecutionBoundaryDiagnostic[] } {
+  try {
+    const normalized = normalizeExecutionResultBoundary(value);
+    const diagnostics = [...(adapterDiagnostics ?? []), ...normalized.diagnostics].filter(
+      (diagnostic, index, all) =>
+        all.findIndex(
+          (candidate) =>
+            candidate.actionId === diagnostic.actionId &&
+            candidate.originalMalformedCode === diagnostic.originalMalformedCode &&
+            JSON.stringify(candidate.validationPath) === JSON.stringify(diagnostic.validationPath),
+        ) === index,
+    );
+    return { result: normalized.result, diagnostics };
+  } catch (error) {
+    throw new AurousError({
+      code: 'AUR-AGENT-005',
+      summary: `Recovery action ${actionId} returned an invalid structured result.`,
+      probableCause:
+        'The agent response could not be safely parsed at the recovery action-result boundary.',
+      nextAction:
+        'Do not retry this recovery run. Inspect the exact external state and generate a fresh read-only recovery plan.',
+      runId: recoveryRunId,
+      cause: error,
+    });
+  }
+}
+
+function sanitizeBoundaryText(text: string, diagnostics: ExecutionBoundaryDiagnostic[]): string {
+  return diagnostics.reduce(
+    (sanitized, diagnostic) =>
+      sanitized.split(diagnostic.originalMalformedCode).join('[REDACTED_MALFORMED_AUR_CODE]'),
+    text,
+  );
 }
 
 function validateProposalSemantics(proposal: ReturnType<typeof PlanProposalSchema.parse>): void {
