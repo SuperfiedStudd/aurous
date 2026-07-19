@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+.aurous/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+*.tsbuildinfo
+
