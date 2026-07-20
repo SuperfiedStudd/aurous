@@ -9,6 +9,10 @@ import type {
   RecoveryInspectionInput,
 } from './types.js';
 import { writeManualPrompt } from './helpers.js';
+import {
+  hasTypedAirtableRelation,
+  materializeAirtableRelationAction,
+} from '../productivity/airtable-relations.js';
 
 export class MockAgentAdapter implements AgentAdapter {
   readonly name = 'mock' as const;
@@ -107,41 +111,107 @@ export class MockAgentAdapter implements AgentAdapter {
 
   executePlan(input: PlanExecutionInput) {
     const started = new Date();
-    const skippedActions = input.plan.plannedActions
-      .filter((action) =>
-        action.properties.some(
-          (property) =>
-            property.key.endsWith('.dedupe.skipReason') &&
-            property.value === 'already-satisfied-relation',
-        ),
-      )
-      .map((action) => ({
-        actionId: action.id,
-        type: action.objectType,
-        name: action.target,
-        reason: 'Already-satisfied relation; no write required.',
-        externalId:
+    const resultIdByAction = new Map<string, string>();
+    const resultTypeByAction = new Map<string, string>();
+    for (const action of input.plan.plannedActions) {
+      const knownId = action.properties.find((property) =>
+        property.key.endsWith('.dedupe.knownExternalId'),
+      )?.value;
+      if (knownId) {
+        resultIdByAction.set(action.id, knownId);
+        resultTypeByAction.set(action.id, action.objectType);
+      }
+    }
+
+    const skippedActions: {
+      actionId: string;
+      type: string;
+      name: string;
+      reason: string;
+      externalId: string;
+      url: string;
+    }[] = [];
+    const createdObjects: {
+      actionId: string;
+      type: string;
+      name: string;
+      externalId: string;
+      url: string;
+    }[] = [];
+    const completedActionIds: string[] = [];
+
+    for (const action of input.plan.plannedActions) {
+      const skipReason = action.properties.find(
+        (property) =>
+          property.key.endsWith('.dedupe.skipReason') &&
+          property.value === 'already-satisfied-relation',
+      );
+      if (skipReason) {
+        const externalId =
           action.properties.find((property) => property.key.endsWith('.dedupe.knownExternalId'))
-            ?.value ?? `mock-${action.id}`,
-        url: `https://mock.aurous.local/${input.plan.runId}/${action.id}`,
-      }));
-    const skippedIds = new Set(skippedActions.map((action) => action.actionId));
-    const createdObjects = input.plan.plannedActions
-      .filter((action) => action.operation === 'create' && !skippedIds.has(action.id))
-      .map((action) => ({
-        actionId: action.id,
-        type: action.objectType,
-        name: action.target,
-        externalId: `mock-${action.id}`,
-        url: `https://mock.aurous.local/${input.plan.runId}/${action.id}`,
-      }));
+            ?.value ??
+          resultIdByAction.get(action.id) ??
+          `mock-${action.id}`;
+        skippedActions.push({
+          actionId: action.id,
+          type: action.objectType,
+          name: action.target,
+          reason: 'Already-satisfied relation; no write required.',
+          externalId,
+          url: `https://mock.aurous.local/${input.plan.runId}/${action.id}`,
+        });
+        resultIdByAction.set(action.id, externalId);
+        resultTypeByAction.set(action.id, action.objectType);
+        completedActionIds.push(action.id);
+        continue;
+      }
+
+      if (input.plan.tool === 'airtable' && hasTypedAirtableRelation(action)) {
+        const materialized = materializeAirtableRelationAction(action, resultIdByAction, {
+          resultTypeByAction,
+        });
+        const externalId =
+          materialized.properties.find((property) => property.key === 'airtable.recordId')?.value ??
+          `mock-${action.id}`;
+        skippedActions.push({
+          actionId: action.id,
+          type: materialized.objectType,
+          name: materialized.target,
+          reason: 'Mock resolved typed airtable.relation from exact approved action results.',
+          externalId,
+          url: `https://mock.aurous.local/${input.plan.runId}/${action.id}`,
+        });
+        resultIdByAction.set(action.id, externalId);
+        resultTypeByAction.set(action.id, materialized.objectType);
+        completedActionIds.push(action.id);
+        continue;
+      }
+
+      if (action.operation === 'create') {
+        const externalId = resultIdByAction.get(action.id) ?? `mock-${action.id}`;
+        createdObjects.push({
+          actionId: action.id,
+          type: action.objectType,
+          name: action.target,
+          externalId,
+          url: `https://mock.aurous.local/${input.plan.runId}/${action.id}`,
+        });
+        resultIdByAction.set(action.id, externalId);
+        resultTypeByAction.set(action.id, action.objectType);
+        completedActionIds.push(action.id);
+        continue;
+      }
+
+      completedActionIds.push(action.id);
+    }
+
     const finished = new Date();
     const value = {
       status: 'succeeded' as const,
       summary: `Mock execution completed all ${input.plan.plannedActions.length} approved actions.`,
       createdObjects,
       skippedActions,
-      completedActionIds: input.plan.plannedActions.map((action) => action.id),
+      completedActionIds,
       compatibilityNotes: [],
       warnings: ['Mock mode made no external writes.'],
       failures: [],

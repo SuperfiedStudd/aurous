@@ -11,6 +11,11 @@ import {
   looksLikeIssueKey,
   normalizedObjectType,
 } from '../adapters/productivity/exact-bindings.js';
+import {
+  hasTypedAirtableRelation,
+  looksLikeActionOutputPlaceholder,
+  validateAirtableRelationBinding,
+} from '../adapters/productivity/airtable-relations.js';
 import { validateLinearDiscoveryIssues } from '../adapters/productivity/linear.js';
 import {
   AgentNameSchema,
@@ -1888,7 +1893,8 @@ function validateExactObjectAuthorizations(
   const inspectedById = new Map(destination.existingObjects.map((object) => [object.id, object]));
   for (const action of proposal.plannedActions) {
     const knownId = action.properties.find((property) => property.key === exactKey)?.value;
-    if (requiresExactExistingId(action) && !knownId) {
+    const typedAirtableRelation = tool === 'airtable' && hasTypedAirtableRelation(action);
+    if (requiresExactExistingId(action) && !knownId && !typedAirtableRelation) {
       throw new AurousError({
         code: 'AUR-PLAN-009',
         summary: `Action ${action.id} (${action.objectType} ${JSON.stringify(action.target)}) proposes reuse or update without an exact external ID.`,
@@ -2058,6 +2064,16 @@ function validateAirtableReferences(
   for (const [key, type] of expected) {
     const value = action.properties.find((property) => property.key === key)?.value;
     if (!value) continue;
+    if (looksLikeActionOutputPlaceholder(value)) {
+      throw new AurousError({
+        code: 'AUR-PLAN-009',
+        summary: `Action ${action.id} proposes ${key} using an unsupported action-output placeholder.`,
+        probableCause:
+          'Discovery found or implied an existing object, but the immutable action retained only a name-based or ${action.output} authorization.',
+        nextAction:
+          'No writes were attempted. Use exact inspected IDs or typed airtable.relation recordActionId dependencies.',
+      });
+    }
     const exact = destination.existingObjects.find((object) => object.id === value);
     if (!exact || !exactObjectTypeMatches('airtable', exact.type, type)) {
       throw new AurousError({
@@ -2073,6 +2089,16 @@ function validateAirtableReferences(
     (property) => property.key === 'airtable.linkedRecordIds',
   )?.value;
   if (linkedRecordIds) {
+    if (looksLikeActionOutputPlaceholder(linkedRecordIds)) {
+      throw new AurousError({
+        code: 'AUR-PLAN-009',
+        summary: `Action ${action.id} proposes airtable.linkedRecordIds using an unsupported action-output placeholder.`,
+        probableCause:
+          'Discovery found or implied an existing object, but the immutable action retained only a name-based or ${action.output} authorization.',
+        nextAction:
+          'No writes were attempted. Use exact inspected IDs or typed airtable.relation targets.',
+      });
+    }
     let ids: string[] = [];
     try {
       const parsed = JSON.parse(linkedRecordIds) as unknown;
@@ -2096,6 +2122,16 @@ function validateAirtableReferences(
       });
     }
     for (const id of ids) {
+      if (looksLikeActionOutputPlaceholder(id)) {
+        throw new AurousError({
+          code: 'AUR-PLAN-009',
+          summary: `Action ${action.id} proposes a linked record using an unsupported action-output placeholder.`,
+          probableCause:
+            'Discovery found or implied an existing object, but the immutable action retained only a name-based or ${action.output} authorization.',
+          nextAction:
+            'No writes were attempted. Use exact inspected IDs or typed airtable.relation targets.',
+        });
+      }
       const exact = destination.existingObjects.find((object) => object.id === id);
       if (!exact || !exactObjectTypeMatches('airtable', exact.type, 'record')) {
         throw new AurousError({
@@ -2108,11 +2144,14 @@ function validateAirtableReferences(
       }
     }
   }
+  const existingIds = new Set(destination.existingObjects.map((object) => object.id));
+  validateAirtableRelationBinding(action, actions, existingIds);
   if (
     (action.operation === 'link' ||
       action.properties.some((property) => property.key === 'airtable.linkedRecordIds')) &&
     !action.properties.some((property) => property.key === 'airtable.recordId') &&
-    !action.properties.some((property) => property.key === 'airtable.dedupe.knownExternalId')
+    !action.properties.some((property) => property.key === 'airtable.dedupe.knownExternalId') &&
+    !hasTypedAirtableRelation(action)
   ) {
     throw new AurousError({
       code: 'AUR-PLAN-009',
@@ -2294,6 +2333,7 @@ function requiresExactExistingId(
 function requiresExactIdForLink(
   action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
 ): boolean {
+  if (hasTypedAirtableRelation(action)) return false;
   if (action.objectType.toLocaleLowerCase().includes('relation')) return true;
   if (/\blink\b.+\bto\b/i.test(action.target)) return true;
   if (/\bexisting\b.+\band\b.+\bexisting\b/i.test(action.target)) return true;
@@ -2341,7 +2381,8 @@ function validateExecutablePlanDestination(plan: AurousPlan): void {
   for (const action of plan.plannedActions) {
     if (
       requiresExactExistingId(action) &&
-      !action.properties.some((property) => property.key.endsWith('.dedupe.knownExternalId'))
+      !action.properties.some((property) => property.key.endsWith('.dedupe.knownExternalId')) &&
+      !(plan.tool === 'airtable' && hasTypedAirtableRelation(action))
     ) {
       throw new AurousError({
         code: 'AUR-APPLY-005',

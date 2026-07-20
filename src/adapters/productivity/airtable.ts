@@ -10,6 +10,11 @@ import {
   stampAlreadySatisfiedRelation,
   stampExactExternalId,
 } from './exact-bindings.js';
+import {
+  airtableRelationProperty,
+  hasTypedAirtableRelation,
+  parseAirtableRelation,
+} from './airtable-relations.js';
 import type { ProductivityAdapter } from './types.js';
 
 /** Airtable is intentionally expressed through the same generic destination contract as Notion and Linear. */
@@ -39,7 +44,9 @@ export class AirtableAdapter implements ProductivityAdapter {
   destinationPlanningInstructions(destination: ResolvedDestination): string {
     return `The exact approved Airtable workspace is ${JSON.stringify(destination.id)} (${destination.name}). Put airtable.workspaceId=${JSON.stringify(destination.id)} and airtable.workspace=${JSON.stringify(destination.name)} on every action. Existing bases, tables, fields, and records may be reused only by exact IDs in the discovery snapshot.
 
-RELATION UPDATES: To link an existing task record to an existing workstream, emit an update or link on the exact task record. Include airtable.baseId, airtable.tableId, airtable.recordId (mutation target), airtable.fieldId (the linked-record field), and airtable.linkedRecordIds as a JSON array of exact related record IDs. Never authorize a relation from prose that only embeds IDs. Never invent a synthetic record whose name describes the relationship.
+RELATION UPDATES: To link records that already exist in discovery, emit an update or link on the exact source record with airtable.baseId, airtable.tableId, airtable.recordId, airtable.fieldId, and airtable.linkedRecordIds as a JSON array of exact related record IDs. Never authorize a relation from prose that only embeds IDs. Never invent a synthetic record whose name describes the relationship. Never use \${action-….output…} placeholders.
+
+SAME-PLAN RELATIONS: When the source or related records are created earlier in this same immutable plan, do not invent future IDs and do not write \${action.output} strings. Authorize a typed dependency on property airtable.relation as JSON: {"source":{"baseActionId":"action-00N"},"targets":[{"baseActionId":"action-00M"}]} (recordActionId is equivalent). Exact discovered records use {"recordId":"rec…"}. Put every referenced create/reuse action in dependsOn. Planning authorizes only the typed dependency; apply resolves exact record IDs from that approved action's persisted result.
 
 NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one table. For a new base, action-001 must be the single base create action and must include airtable.base.initialTables as a JSON array of the exact requested initial tables. Each entry must contain a name and its primary field definition. For the requested launch setup, include exactly Workstreams, Tasks, and Integrations in that one property—no separate create-table actions for those bootstrap tables. Dependent field and record actions must use airtable.baseActionId=action-001 plus airtable.bootstrapTableName set to one exact table name from airtable.base.initialTables. The executor resolves returned table IDs from action-001; never fabricate one. A linked-record field must use airtable.linkedBootstrapTableName for another exact bootstrap table or an inspected exact table ID. For an existing base use airtable.baseId; use airtable.tableId / airtable.tableActionId only for inspected or separately created tables. Names are display-only and never authorize reuse.`;
   }
@@ -74,6 +81,21 @@ NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one 
         );
         if (existing && relationAlreadySatisfied(existing, linkedIds)) {
           bound = stampAlreadySatisfiedRelation(bound, 'airtable');
+        } else if (hasTypedAirtableRelation(bound)) {
+          const binding = parseAirtableRelation(airtableRelationProperty(bound));
+          if (
+            binding?.source.recordId &&
+            binding.targets.every((target) => Boolean(target.recordId))
+          ) {
+            const source =
+              existing ??
+              destination.existingObjects.find((object) => object.id === binding.source.recordId);
+            const typedLinkedIds = binding.targets.map((target) => target.recordId!);
+            if (source && relationAlreadySatisfied(source, typedLinkedIds)) {
+              bound = stampExactExternalId(bound, source, 'airtable');
+              bound = stampAlreadySatisfiedRelation(bound, 'airtable');
+            }
+          }
         }
         return bound;
       }),
@@ -93,7 +115,7 @@ NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one 
   planningInstructions(objective: string): string {
     return `Design a small, useful Airtable workspace for this objective: ${objective}
 
-Use native Airtable base, table, field, record, and linked-record semantics. Keep the requested quantity and negative constraints binding. Do not add customary objects. When creating a new base, use one immutable base action with its required bootstrap tables and primary fields in airtable.base.initialTables, then explicit dependent actions for non-primary fields and records. Do not create anything while planning.`;
+Use native Airtable base, table, field, record, and linked-record semantics. Keep the requested quantity and negative constraints binding. Do not add customary objects. When creating a new base, use one immutable base action with its required bootstrap tables and primary fields in airtable.base.initialTables, then explicit dependent actions for non-primary fields and records. Same-plan record links must use typed airtable.relation dependencies, never \${action.output} placeholders. Do not create anything while planning.`;
   }
 
   executionInstructions(plan: AurousPlan): string {
@@ -102,7 +124,8 @@ Use native Airtable base, table, field, record, and linked-record semantics. Kee
 AIRTABLE EXECUTION CONTRACT:
 - Inspect and operate only in the exact workspace from airtable.workspaceId. Do not substitute a workspace.
 - Before every action with airtable.dedupe.knownExternalId, fetch the exact ID and verify type, name, and approved parent. A compatible match is skipped; failure never falls back to a name search or creation.
-- For relation/link updates, mutate only the exact airtable.recordId / knownExternalId target and set the exact linked-record field to airtable.linkedRecordIds. If the relationship is already present, skip as a no-op reuse.
+- For relation/link updates with exact airtable.recordId and airtable.linkedRecordIds, mutate only that target and set the exact linked-record field. If the relationship is already present, skip as a no-op reuse.
+- For actions with airtable.relation, resolve source and target record IDs only from that approved dependency's persisted exact create/reuse result (or from the exact recordId already bound). Validate each resolved ID before writing the relation. Missing, failed, skipped-without-ID, mismatched, or wrong-type dependencies must stop safely before any relation write. Never invent IDs and never interpret \${action.output} strings.
 - For unguarded create targets, do narrow exact-name inventories within the approved workspace/base/table. If one compatible exact match exists, skip it; if several exist, report an ambiguity and do not write.
 - Create a new base only through its approved create action and capture its returned exact base ID, URL, and bootstrap table IDs. The official create_base operation requires its non-empty tables payload to come from airtable.base.initialTables; it must contain no table beyond the approved action. Dependent actions resolve airtable.baseActionId and airtable.bootstrapTableName from that create result. Never invent or prefill an ID.
 - Likewise resolve table and field action references only from exact approved action results. Create non-primary fields before records, and use exact returned table IDs for linked-record relationships when supported by the official MCP schema.

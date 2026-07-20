@@ -370,6 +370,15 @@ function normalizeNotionRelationAction(action: PlanAction): PlanAction {
 }
 
 function normalizeAirtableRelationAction(action: PlanAction): PlanAction {
+  const typedRelation = propertyValue(action.properties, 'airtable.relation');
+  if (typedRelation) {
+    return {
+      ...action,
+      operation: action.operation === 'create' ? 'update' : action.operation,
+      objectType: 'airtable.record',
+      properties: normalizeNullishProperties(action.properties),
+    };
+  }
   const recordId = propertyValue(action.properties, 'airtable.recordId');
   if (!recordId) return action;
   if (action.operation === 'link' || isSyntheticRelationshipTarget(action.target)) {
