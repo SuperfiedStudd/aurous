@@ -101,7 +101,7 @@ export function resolveExactObject(
       issueKeys.flatMap((key) =>
         destination.existingObjects.filter(
           (object) =>
-            exactObjectTypeMatches(tool, object.type, action.objectType) &&
+            normalizedObjectType(object.type) === 'issue' &&
             (parentId === undefined || (object.parentId ?? destination.id) === parentId) &&
             (object.identifier === key ||
               linearIssueKeyFromObject(object) === key ||
@@ -452,12 +452,14 @@ function candidateIssueKeys(action: PlanAction): string[] {
 }
 
 function requiresIssueKeyResolution(action: PlanAction): boolean {
-  return (
-    action.operation === 'update' ||
-    action.operation === 'link' ||
-    /\b(?:reuse|reconcile|skip|existing)\b/i.test(action.description) ||
-    Boolean(propertyValue(action.properties, ['linear.issueKey', 'issueKey']))
-  );
+  if (action.operation === 'update' || action.operation === 'link') return true;
+  if (/\b(?:reuse|reconcile|skip|existing)\b/i.test(action.description)) return true;
+  const issueId = propertyValue(action.properties, ['linear.issueId', 'issueId']);
+  if (issueId && looksLikeIssueKey(issueId)) return true;
+  const known = propertyValue(action.properties, 'linear.dedupe.knownExternalId');
+  if (known && looksLikeIssueKey(known)) return true;
+  // Display-only linear.issueKey does not authorize mutation and does not alone require resolution.
+  return false;
 }
 
 function unresolvedLinearIssueKeyError(action: PlanAction, issueKeys: string[]): AurousError {

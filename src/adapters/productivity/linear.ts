@@ -37,9 +37,11 @@ export class LinearAdapter implements ProductivityAdapter {
     discoveryInstructions: `Use only the official Linear MCP and perform read-only calls. Discover every accessible team and preserve each exact team ID and friendly name. For each team, inspect matching projects, milestones, labels, and issues relevant to the supplied project name and objective.
 
 LINEAR ISSUE IDENTITY CONTRACT:
-- For every inspected issue, existingObjects[].id MUST be the immutable Linear issue UUID returned by the MCP.
-- Put the human-readable identifier such as JAS-17 only in existingObjects[].identifier (and the URL when present). Never put JAS-17 (or any TEAM-NUMBER key) in existingObjects[].id.
-- If an issue cannot be resolved to exactly one UUID, omit it and warn; do not invent an ID and do not substitute the issue key for the UUID.
+- Official Linear MCP issue payloads expose BOTH an immutable UUID and a human-readable key such as JAS-17. These are different values.
+- existingObjects[].id MUST be the immutable Linear issue UUID. Prefer any UUID-shaped field on the issue object (commonly id, uuid, or issueId when that field is UUID-shaped). Never put a TEAM-NUMBER key in existingObjects[].id even when the MCP labels that key as "id".
+- Put the human-readable key such as JAS-17 only in existingObjects[].identifier (and the URL when present).
+- When list_issues or get_issue returns a KEY-shaped primary id, call get_issue for that exact key once and extract the UUID-shaped issue identity from the same payload. Require exactly one issue UUID; do not invent IDs and do not confuse team, project, milestone, label, or state UUIDs for the issue UUID.
+- Only omit an exact-title issue when the MCP response truly contains no UUID-shaped issue identity. If a UUID is present alongside JAS-17, include the issue.
 - Mark an existingAurousMatch only when an exact object inspection supports it. Never create, update, archive, or delete anything.`,
   } as const;
 
@@ -132,7 +134,9 @@ LINEAR DEMO CONTRACT:
 - For approved targets without a known external ID, perform narrowly scoped exact-name lookup using the approved team/project. Do not browse unrelated objects.
 - For issue actions without linear.dedupe.knownExternalId, deduplication is a mandatory single inventory step: call list_issues once for the approved team and project with limit 250 and no query, assignee, state, label, or ordering filters. Compare only the unguarded approved issue targets against the returned titles case-sensitively. Never use list_issues.query for deduplication. If every approved issue action has a known external ID, do not call list_issues. If one or more exact-title matches exist for an unguarded action, do not create it; skip a single compatible match and fail visibly on ambiguous or incompatible matches.
 - If exactly one compatible target already exists, make no write, include the action ID in completedActionIds, and add a skippedActions entry with its exact ID and URL. If matches are ambiguous or incompatible, fail the action visibly.
-- createdObjects contains only objects written by this run. Preserve the exact ID and URL returned by Linear for every created object; do not invent either value.
+- createdObjects contains only objects written by this run. For every created or skipped Linear issue, set externalId to the immutable Linear issue UUID from the MCP payload (UUID-shaped id/uuid/issueId field), and set identifier to the human-readable key such as JAS-17. Never put JAS-17 (or any TEAM-NUMBER key) in externalId, linear.issueId, or linear.dedupe.knownExternalId—even when the MCP labels the key as "id".
+- After save_issue (or equivalent create), call get_issue on the returned key or UUID. Extract the UUID-shaped issue identity from that payload. If the create payload exposes only the issue key, perform exactly one read-only get_issue/list lookup by that key, require exactly one UUID-shaped issue id in the result, then persist that UUID as externalId and the key as identifier. Zero or multiple UUID matches must fail the action visibly.
+- Preserve the exact URL returned by Linear when available; do not invent IDs or URLs.
 - Preserve project relationships, milestone relationships, descriptions, numeric priorities, states, assignee, and labels exactly when supported.
 - The connected MCP supports create_issue_label, save_project, save_milestone, and save_issue. Do not substitute documents, cycles, or comments.
 - If a requested field is unsupported or a workspace convention is unavailable, omit or adjust that field only when the core object can still be useful, and describe the exact adjustment in compatibilityNotes. Never silently degrade.

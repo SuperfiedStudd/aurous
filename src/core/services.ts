@@ -18,6 +18,7 @@ import {
   validateAirtableRelationBinding,
 } from '../adapters/productivity/airtable-relations.js';
 import { materializeAirtableCompletedNoOpProposal } from '../adapters/productivity/airtable-noop.js';
+import { normalizeLinearExecutionIdentities } from '../adapters/productivity/linear-identity.js';
 import { validateLinearDiscoveryIssues } from '../adapters/productivity/linear.js';
 import {
   AgentNameSchema,
@@ -635,20 +636,20 @@ export class AurousServices {
       `${JSON.stringify(discovery)}\n`,
       { encoding: 'utf8', mode: 0o600 },
     );
-    const trace = invocation.discoveryTrace
+    const discoveryTrace = invocation.discoveryTrace
       ? SanitizedDiscoveryTraceSchema.parse(redactValue(invocation.discoveryTrace))
       : undefined;
-    if (trace) {
+    if (discoveryTrace) {
       await writeFile(
         path.join(runDirectory, 'discovery-trace.json'),
-        `${JSON.stringify(trace, null, 2)}\n`,
+        `${JSON.stringify(discoveryTrace, null, 2)}\n`,
         { encoding: 'utf8', mode: 0o600 },
       );
     }
     if (
       input.adapter.name === 'codex' &&
       input.productivity.name !== 'mock' &&
-      (!trace || trace.operations.length === 0)
+      (!discoveryTrace || discoveryTrace.operations.length === 0)
     ) {
       throw new AurousError({
         code: 'AUR-DEST-009',
@@ -884,6 +885,7 @@ export class AurousServices {
             ? { parentId: trelloParentId(action, resultIdByAction, saved.id) }
             : {}),
         ...(object.url ? { url: object.url } : {}),
+        ...(object.identifier ? { identifier: object.identifier } : {}),
       });
     }
     await contextStore.saveDestination({
@@ -1910,20 +1912,20 @@ function validateExactObjectAuthorizations(
           'No writes were attempted. Inspect the object by exact ID or regenerate this action as an explicit create decision.',
       });
     }
-    if (
-      tool === 'linear' &&
-      knownId &&
-      exactObjectTypeMatches('linear', action.objectType, 'issue') &&
-      looksLikeIssueKey(knownId)
-    ) {
-      throw new AurousError({
-        code: 'AUR-PLAN-010',
-        summary: `Action ${action.id} cannot authorize a Linear issue update with issue key ${JSON.stringify(knownId)}.`,
-        probableCause:
-          'A human-readable issue key was used where the immutable Linear issue UUID is required.',
-        nextAction:
-          'No writes were attempted. Bind linear.issueId and linear.dedupe.knownExternalId to the discovered UUID; keep the key only in linear.issueKey.',
-      });
+    if (tool === 'linear' && exactObjectTypeMatches('linear', action.objectType, 'issue')) {
+      for (const field of ['linear.dedupe.knownExternalId', 'linear.issueId'] as const) {
+        const value = action.properties.find((property) => property.key === field)?.value;
+        if (value && looksLikeIssueKey(value)) {
+          throw new AurousError({
+            code: 'AUR-PLAN-010',
+            summary: `Action ${action.id} cannot authorize a Linear issue update with issue key ${JSON.stringify(value)}.`,
+            probableCause:
+              'A human-readable issue key was used where the immutable Linear issue UUID is required.',
+            nextAction:
+              'No writes were attempted. Bind linear.issueId and linear.dedupe.knownExternalId to the discovered UUID; keep the key only in linear.issueKey.',
+          });
+        }
+      }
     }
     if (knownId) {
       const inspected = inspectedById.get(knownId);
@@ -2462,8 +2464,9 @@ function normalizeExecutionCompatibility(
   result: ExecutionResult,
 ): ExecutionResult {
   if (plan.tool !== 'linear') return result;
-  const notes = [...(result.compatibilityNotes ?? [])];
-  for (const object of [...result.createdObjects, ...(result.skippedActions ?? [])]) {
+  const normalized = normalizeLinearExecutionIdentities(result);
+  const notes = [...(normalized.compatibilityNotes ?? [])];
+  for (const object of [...normalized.createdObjects, ...(normalized.skippedActions ?? [])]) {
     if (!object.externalId) {
       notes.push(
         `Official Linear MCP returned no ID for ${object.type} "${object.name}"; the action result cannot be used for exact-ID replay.`,
@@ -2475,7 +2478,7 @@ function normalizeExecutionCompatibility(
       );
     }
   }
-  return ExecutionResultSchema.parse({ ...result, compatibilityNotes: [...new Set(notes)] });
+  return ExecutionResultSchema.parse({ ...normalized, compatibilityNotes: [...new Set(notes)] });
 }
 
 function linearPlanTeam(plan: AurousPlan): string | undefined {

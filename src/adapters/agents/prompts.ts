@@ -113,7 +113,7 @@ EXECUTION SAFETY RULES:
 - compatibilityNotes must name every unsupported or adjusted field. Use an empty array when there were no adjustments.
 - Use stable AUR-MCP-### or AUR-APPLY-### failure codes.
 - Every failure code must match AUR-<SINGLE-UPPERCASE-CATEGORY>-<3 DIGITS> exactly. Never add another segment or replace the three digits with a word.
-- Include externalId and url on every created or skipped object, using null only when the MCP truly did not return it. Include actionId on every failure, using null only for a run-wide failure.
+- Include externalId and url on every created or skipped object, using null only when the MCP truly did not return it. For Linear issues, externalId must be the immutable UUID and identifier must be the human-readable key such as JAS-17 (or null when absent). Include actionId on every failure, using null only for a run-wide failure.
 
 Tool execution guidance:
 ${productivity.executionInstructions(plan)}

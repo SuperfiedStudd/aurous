@@ -179,6 +179,8 @@ export interface CreatedObject {
   type: string;
   name: string;
   externalId?: string;
+  /** Human-readable Linear issue key (e.g. JAS-17). Never authorizes mutation. */
+  identifier?: string;
   url?: string;
 }
 
@@ -188,11 +190,13 @@ export const CreatedObjectSchema = z
     type: z.string(),
     name: z.string(),
     externalId: z.string().nullish(),
+    identifier: z.string().nullish(),
     url: z.string().url().nullish(),
   })
-  .transform<CreatedObject>(({ externalId, url, ...object }) => ({
+  .transform<CreatedObject>(({ externalId, identifier, url, ...object }) => ({
     ...object,
     ...(externalId === null || externalId === undefined ? {} : { externalId }),
+    ...(identifier === null || identifier === undefined ? {} : { identifier }),
     ...(url === null || url === undefined ? {} : { url }),
   }));
 
@@ -202,6 +206,8 @@ export interface SkippedAction {
   name: string;
   reason: string;
   externalId?: string;
+  /** Human-readable Linear issue key (e.g. JAS-17). Never authorizes mutation. */
+  identifier?: string;
   url?: string;
 }
 
@@ -212,11 +218,13 @@ export const SkippedActionSchema = z
     name: z.string(),
     reason: z.string(),
     externalId: z.string().nullish(),
+    identifier: z.string().nullish(),
     url: z.string().url().nullish(),
   })
-  .transform<SkippedAction>(({ externalId, url, ...action }) => ({
+  .transform<SkippedAction>(({ externalId, identifier, url, ...action }) => ({
     ...action,
     ...(externalId === null || externalId === undefined ? {} : { externalId }),
+    ...(identifier === null || identifier === undefined ? {} : { identifier }),
     ...(url === null || url === undefined ? {} : { url }),
   }));
 
@@ -278,12 +286,14 @@ const ExecutionResponseCreatedObjectSchema = z
     type: z.string(),
     name: z.string(),
     externalId: z.string().nullable(),
+    identifier: z.string().nullable(),
     url: z.string().nullable(),
   })
   .strict()
-  .transform<CreatedObject>(({ externalId, url, ...object }) => ({
+  .transform<CreatedObject>(({ externalId, identifier, url, ...object }) => ({
     ...object,
     ...(externalId === null ? {} : { externalId }),
+    ...(identifier === null ? {} : { identifier }),
     ...(url === null ? {} : { url }),
   }));
 
@@ -294,12 +304,14 @@ const ExecutionResponseSkippedActionSchema = z
     name: z.string(),
     reason: z.string(),
     externalId: z.string().nullable(),
+    identifier: z.string().nullable(),
     url: z.string().nullable(),
   })
   .strict()
-  .transform<SkippedAction>(({ externalId, url, ...action }) => ({
+  .transform<SkippedAction>(({ externalId, identifier, url, ...action }) => ({
     ...action,
     ...(externalId === null ? {} : { externalId }),
+    ...(identifier === null ? {} : { identifier }),
     ...(url === null ? {} : { url }),
   }));
 

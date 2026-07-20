@@ -108,12 +108,13 @@ export const executionResultJsonSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['actionId', 'type', 'name', 'externalId', 'url'],
+        required: ['actionId', 'type', 'name', 'externalId', 'identifier', 'url'],
         properties: {
           actionId: { type: 'string' },
           type: { type: 'string' },
           name: { type: 'string' },
           externalId: { type: ['string', 'null'] },
+          identifier: { type: ['string', 'null'] },
           url: { type: ['string', 'null'] },
         },
       },
@@ -123,13 +124,14 @@ export const executionResultJsonSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['actionId', 'type', 'name', 'reason', 'externalId', 'url'],
+        required: ['actionId', 'type', 'name', 'reason', 'externalId', 'identifier', 'url'],
         properties: {
           actionId: { type: 'string' },
           type: { type: 'string' },
           name: { type: 'string' },
           reason: { type: 'string' },
           externalId: { type: ['string', 'null'] },
+          identifier: { type: ['string', 'null'] },
           url: { type: ['string', 'null'] },
         },
       },
