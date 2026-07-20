@@ -28,7 +28,9 @@ export class AirtableAdapter implements ProductivityAdapter {
   }
 
   destinationPlanningInstructions(destination: ResolvedDestination): string {
-    return `The exact approved Airtable workspace is ${JSON.stringify(destination.id)} (${destination.name}). Put airtable.workspaceId=${JSON.stringify(destination.id)} and airtable.workspace=${JSON.stringify(destination.name)} on every action. Existing bases, tables, fields, and records may be reused only by exact IDs in the discovery snapshot. For an existing base use airtable.baseId; for a new base, the base creation action must be first and dependent actions must use airtable.baseActionId with that immutable action ID, never a fabricated base ID. Tables and fields follow the same rule with airtable.tableId / airtable.tableActionId and airtable.fieldId / airtable.fieldActionId. A linked-record field must reference an exact existing table ID or its table creation action ID. Names are display-only and never authorize reuse.`;
+    return `The exact approved Airtable workspace is ${JSON.stringify(destination.id)} (${destination.name}). Put airtable.workspaceId=${JSON.stringify(destination.id)} and airtable.workspace=${JSON.stringify(destination.name)} on every action. Existing bases, tables, fields, and records may be reused only by exact IDs in the discovery snapshot.
+
+NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one table. For a new base, action-001 must be the single base create action and must include airtable.base.initialTables as a JSON array of the exact requested initial tables. Each entry must contain a name and its primary field definition. For the requested launch setup, include exactly Workstreams, Tasks, and Integrations in that one property—no separate create-table actions for those bootstrap tables. Dependent field and record actions must use airtable.baseActionId=action-001 plus airtable.bootstrapTableName set to one exact table name from airtable.base.initialTables. The executor resolves returned table IDs from action-001; never fabricate one. A linked-record field must use airtable.linkedBootstrapTableName for another exact bootstrap table or an inspected exact table ID. For an existing base use airtable.baseId; use airtable.tableId / airtable.tableActionId only for inspected or separately created tables. Names are display-only and never authorize reuse.`;
   }
 
   bindDestination(proposal: PlanProposal, destination: ResolvedDestination): PlanProposal {
@@ -78,7 +80,7 @@ export class AirtableAdapter implements ProductivityAdapter {
   planningInstructions(objective: string): string {
     return `Design a small, useful Airtable workspace for this objective: ${objective}
 
-Use native Airtable base, table, field, record, and linked-record semantics. Keep the requested quantity and negative constraints binding. Plan one explicit create/reuse action for every base, table, field, and record; do not add customary objects. New child objects must depend on their base/table creation actions. Do not create anything while planning.`;
+Use native Airtable base, table, field, record, and linked-record semantics. Keep the requested quantity and negative constraints binding. Do not add customary objects. When creating a new base, use one immutable base action with its required bootstrap tables and primary fields in airtable.base.initialTables, then explicit dependent actions for non-primary fields and records. Do not create anything while planning.`;
   }
 
   executionInstructions(plan: AurousPlan): string {
@@ -88,8 +90,8 @@ AIRTABLE EXECUTION CONTRACT:
 - Inspect and operate only in the exact workspace from airtable.workspaceId. Do not substitute a workspace.
 - Before every action with airtable.dedupe.knownExternalId, fetch the exact ID and verify type, name, and approved parent. A compatible match is skipped; failure never falls back to a name search or creation.
 - For unguarded create targets, do narrow exact-name inventories within the approved workspace/base/table. If one compatible exact match exists, skip it; if several exist, report an ambiguity and do not write.
-- Create a new base only through its approved create action and capture its returned exact base ID and URL. Dependent actions resolve airtable.baseActionId from that create result. Never invent or prefill a base ID.
-- Likewise resolve table and field action references only from exact approved action results. Create fields before records, and use exact returned table IDs for linked-record relationships when supported by the official MCP schema.
+- Create a new base only through its approved create action and capture its returned exact base ID, URL, and bootstrap table IDs. The official create_base operation requires its non-empty tables payload to come from airtable.base.initialTables; it must contain no table beyond the approved action. Dependent actions resolve airtable.baseActionId and airtable.bootstrapTableName from that create result. Never invent or prefill an ID.
+- Likewise resolve table and field action references only from exact approved action results. Create non-primary fields before records, and use exact returned table IDs for linked-record relationships when supported by the official MCP schema.
 - Do not create interfaces, views, automations, extra fields, or extra records unless an explicit approved action requires one. Never delete.
 - Report every created or reused object with its exact returned ID and URL when available. State unsupported capabilities in compatibilityNotes; never silently degrade.`;
   }

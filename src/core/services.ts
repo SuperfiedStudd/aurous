@@ -1737,6 +1737,59 @@ function validateAirtableReferences(
   actions: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'],
   destination: ResolvedDestination,
 ): void {
+  const baseAction = actions.find(
+    (candidate) =>
+      normalizedObjectType(candidate.objectType) === 'base' && candidate.operation === 'create',
+  );
+  const bootstrapTables = baseAction ? airtableBootstrapTableNames(baseAction) : [];
+  if (
+    baseAction &&
+    !baseAction.properties.some((property) => property.key === 'airtable.dedupe.knownExternalId') &&
+    bootstrapTables.length === 0
+  ) {
+    throw new AurousError({
+      code: 'AUR-PLAN-013',
+      summary: 'Airtable new-base plan omits required bootstrap table definitions.',
+      probableCause: 'The official Airtable create_base operation cannot create an empty base.',
+      nextAction:
+        'Regenerate the plan with one non-empty airtable.base.initialTables array on the base create action.',
+    });
+  }
+  if (
+    baseAction &&
+    normalizedObjectType(action.objectType) === 'table' &&
+    propertyValue(action, 'airtable.baseActionId') === baseAction.id
+  ) {
+    throw new AurousError({
+      code: 'AUR-PLAN-014',
+      summary: `Airtable bootstrap table ${JSON.stringify(action.target)} must be included in the base creation action.`,
+      probableCause:
+        'Creating it later would require an empty base, which the official MCP rejects.',
+      nextAction:
+        'Include the table and its primary field in airtable.base.initialTables, then use dependent field or record actions.',
+    });
+  }
+  const bootstrapTable = propertyValue(action, 'airtable.bootstrapTableName');
+  if (bootstrapTable && !bootstrapTables.includes(bootstrapTable)) {
+    throw new AurousError({
+      code: 'AUR-PLAN-015',
+      summary: `Airtable action ${action.id} references a bootstrap table not defined by the base action.`,
+      probableCause: 'The action would need a fabricated or unverified table ID.',
+      nextAction:
+        'Reference one exact table name from the immutable airtable.base.initialTables payload.',
+    });
+  }
+  const linkedBootstrapTable = propertyValue(action, 'airtable.linkedBootstrapTableName');
+  if (linkedBootstrapTable && !bootstrapTables.includes(linkedBootstrapTable)) {
+    throw new AurousError({
+      code: 'AUR-PLAN-016',
+      summary: `Airtable action ${action.id} links to a bootstrap table not defined by the base action.`,
+      probableCause:
+        'The linked-record relationship cannot be resolved from an approved exact action result.',
+      nextAction:
+        'Reference one exact table name from the immutable airtable.base.initialTables payload.',
+    });
+  }
   const expected = new Map([
     ['airtable.baseId', 'base'],
     ['airtable.tableId', 'table'],
@@ -1769,7 +1822,7 @@ function validateAirtableReferences(
       !dependency ||
       dependency.operation !== 'create' ||
       !exactObjectTypeMatches('airtable', dependency.objectType, type) ||
-      !action.dependsOn.includes(value)
+      !dependsOnAction(action, value, actions)
     ) {
       throw new AurousError({
         code: 'AUR-PLAN-012',
@@ -1781,6 +1834,61 @@ function validateAirtableReferences(
       });
     }
   }
+}
+
+function dependsOnAction(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+  requiredActionId: string,
+  actions: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'],
+): boolean {
+  const byId = new Map(actions.map((candidate) => [candidate.id, candidate]));
+  const pending = [...action.dependsOn];
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) continue;
+    if (current === requiredActionId) return true;
+    visited.add(current);
+    pending.push(...(byId.get(current)?.dependsOn ?? []));
+  }
+  return false;
+}
+
+function propertyValue(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+  key: string,
+): string | undefined {
+  return action.properties.find((property) => property.key === key)?.value;
+}
+
+function airtableBootstrapTableNames(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+): string[] {
+  const value = propertyValue(action, 'airtable.base.initialTables');
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) throw new Error('not an array');
+    const names = parsed.map((table) => (isNamedAirtableTable(table) ? table.name : undefined));
+    if (names.some((name) => !name)) throw new Error('missing name');
+    return [...new Set(names as string[])];
+  } catch {
+    throw new AurousError({
+      code: 'AUR-PLAN-017',
+      summary: 'Airtable bootstrap table definitions are not valid JSON.',
+      probableCause: 'The base create action did not provide a bounded table array with names.',
+      nextAction: 'Regenerate the plan with valid airtable.base.initialTables JSON.',
+    });
+  }
+}
+
+function isNamedAirtableTable(value: unknown): value is { name: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'name' in value &&
+    typeof (value as { name?: unknown }).name === 'string'
+  );
 }
 
 function validateLinearRelationshipIds(

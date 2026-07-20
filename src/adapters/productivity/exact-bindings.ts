@@ -61,9 +61,11 @@ export function normalizedObjectType(type: string): string {
     .trim()
     .toLocaleLowerCase()
     .replace(/[\s-]+/g, '_');
-  if (normalized === 'issue_label') return 'label';
-  if (normalized === 'data_source') return 'database';
-  return normalized;
+  const unprefixed = normalized.replace(/^airtable[_.]/, '');
+  if (unprefixed === 'issue_label') return 'label';
+  if (unprefixed === 'data_source') return 'database';
+  if (unprefixed === 'records') return 'record';
+  return unprefixed;
 }
 
 export function exactObjectTypeMatches(

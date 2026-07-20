@@ -525,7 +525,505 @@ describe('AurousServices mock flow', () => {
     expect(normalized.inspectedAt).toBe(current);
     expect(savedTrace.operations[0]?.returnedObjectIds).toEqual(['page-product', 'record-readme']);
   });
+
+  it('accepts an Airtable new-base plan with three bootstrap tables and transitive action refs', async () => {
+    const { workspace, store, capture } = await fixture();
+    const discovery = airtableWorkspaceDiscovery();
+    const initialTables = JSON.stringify([
+      { name: 'Workstreams', primaryField: { name: 'Workstream', type: 'singleLineText' } },
+      { name: 'Tasks', primaryField: { name: 'Task', type: 'singleLineText' } },
+      { name: 'Integrations', primaryField: { name: 'Integration', type: 'singleLineText' } },
+    ]);
+    const proposal: PlanProposal = {
+      proposedWorkspaceStructure: [
+        { kind: 'base', name: 'Aurous Build Week HQ', purpose: 'Launch HQ' },
+        { kind: 'field', name: 'Workstream', purpose: 'Link tasks to workstreams.' },
+        { kind: 'record', name: 'Complete README', purpose: 'Track README completion.' },
+      ],
+      plannedActions: [
+        {
+          id: 'action-001',
+          operation: 'create',
+          objectType: 'airtable.base',
+          target: 'Aurous Build Week HQ',
+          description: 'Create the launch base with bootstrap tables.',
+          properties: [
+            { key: 'airtable.base.name', value: 'Aurous Build Week HQ' },
+            { key: 'airtable.base.initialTables', value: initialTables },
+          ],
+          dependsOn: [],
+        },
+        {
+          id: 'action-002',
+          operation: 'create',
+          objectType: 'airtable.field',
+          target: 'Workstream',
+          description: 'Add the Workstream linked-record field on Tasks.',
+          properties: [
+            { key: 'airtable.baseActionId', value: 'action-001' },
+            { key: 'airtable.bootstrapTableName', value: 'Tasks' },
+            { key: 'airtable.linkedBootstrapTableName', value: 'Workstreams' },
+            { key: 'airtable.field.name', value: 'Workstream' },
+          ],
+          dependsOn: ['action-001'],
+        },
+        {
+          id: 'action-003',
+          operation: 'create',
+          objectType: 'airtable.records',
+          target: 'Complete README',
+          description: 'Seed the README task after the Workstream field exists.',
+          properties: [
+            { key: 'airtable.baseActionId', value: 'action-001' },
+            { key: 'airtable.bootstrapTableName', value: 'Tasks' },
+            {
+              key: 'airtable.records',
+              value: JSON.stringify([
+                { Task: 'Complete README', Workstream: 'Launch deliverables' },
+              ]),
+            },
+          ],
+          dependsOn: ['action-002'],
+        },
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'Airtable launch base is ready.',
+    };
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => planningAgent(discovery, proposal),
+    });
+
+    const plan = await services.plan({
+      agent: 'mock',
+      tool: 'airtable',
+      contextPaths: ['.'],
+      objective: 'Set up Airtable for README completion without duplicates.',
+    });
+
+    const bootstrap = JSON.parse(
+      plan.plannedActions[0]?.properties.find(
+        (property) => property.key === 'airtable.base.initialTables',
+      )?.value ?? '[]',
+    ) as Array<{ name: string }>;
+    expect(bootstrap.map((table) => table.name)).toEqual(['Workstreams', 'Tasks', 'Integrations']);
+    expect(plan.plannedActions[2]?.dependsOn).toEqual(['action-002']);
+    expect(
+      plan.plannedActions[2]?.properties.some(
+        (property) => property.key === 'airtable.baseActionId' && property.value === 'action-001',
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects Airtable plans that omit bootstrap tables, create them later, or break action refs', async () => {
+    const { workspace, store, capture } = await fixture();
+    const discovery = airtableWorkspaceDiscovery();
+
+    await expect(
+      planAirtable(
+        workspace,
+        store,
+        capture.output,
+        discovery,
+        {
+          proposedWorkspaceStructure: [
+            { kind: 'base', name: 'Aurous Build Week HQ', purpose: 'Launch HQ' },
+          ],
+          plannedActions: [
+            {
+              id: 'action-001',
+              operation: 'create',
+              objectType: 'base',
+              target: 'Aurous Build Week HQ',
+              description: 'Create an empty base.',
+              properties: [{ key: 'airtable.base.name', value: 'Aurous Build Week HQ' }],
+              dependsOn: [],
+            },
+          ],
+          assumptions: [],
+          warnings: [],
+          destructiveActions: [],
+          expectedResult: 'Base created.',
+        },
+        'Set up Airtable for this project',
+      ),
+    ).rejects.toMatchObject({ code: 'AUR-PLAN-013' });
+
+    await expect(
+      planAirtable(
+        workspace,
+        store,
+        capture.output,
+        discovery,
+        {
+          proposedWorkspaceStructure: [
+            { kind: 'base', name: 'Aurous Build Week HQ', purpose: 'Launch HQ' },
+            { kind: 'table', name: 'Workstreams', purpose: 'Track workstreams.' },
+          ],
+          plannedActions: [
+            {
+              id: 'action-001',
+              operation: 'create',
+              objectType: 'base',
+              target: 'Aurous Build Week HQ',
+              description: 'Create the base with bootstrap tables.',
+              properties: [
+                {
+                  key: 'airtable.base.initialTables',
+                  value: JSON.stringify([
+                    {
+                      name: 'Workstreams',
+                      primaryField: { name: 'Workstream', type: 'singleLineText' },
+                    },
+                  ]),
+                },
+              ],
+              dependsOn: [],
+            },
+            {
+              id: 'action-002',
+              operation: 'create',
+              objectType: 'table',
+              target: 'Workstreams',
+              description: 'Create Workstreams after the base.',
+              properties: [{ key: 'airtable.baseActionId', value: 'action-001' }],
+              dependsOn: ['action-001'],
+            },
+          ],
+          assumptions: [],
+          warnings: [],
+          destructiveActions: [],
+          expectedResult: 'Base and table created.',
+        },
+        'Set up Airtable for this project',
+      ),
+    ).rejects.toMatchObject({ code: 'AUR-PLAN-014' });
+
+    await expect(
+      planAirtable(
+        workspace,
+        store,
+        capture.output,
+        discovery,
+        {
+          proposedWorkspaceStructure: [
+            { kind: 'base', name: 'Aurous Build Week HQ', purpose: 'Launch HQ' },
+            { kind: 'field', name: 'Readiness', purpose: 'Track readiness.' },
+          ],
+          plannedActions: [
+            {
+              id: 'action-001',
+              operation: 'create',
+              objectType: 'base',
+              target: 'Aurous Build Week HQ',
+              description: 'Create the base with bootstrap tables.',
+              properties: [
+                {
+                  key: 'airtable.base.initialTables',
+                  value: JSON.stringify([
+                    {
+                      name: 'Workstreams',
+                      primaryField: { name: 'Workstream', type: 'singleLineText' },
+                    },
+                    { name: 'Tasks', primaryField: { name: 'Task', type: 'singleLineText' } },
+                    {
+                      name: 'Integrations',
+                      primaryField: { name: 'Integration', type: 'singleLineText' },
+                    },
+                  ]),
+                },
+              ],
+              dependsOn: [],
+            },
+            {
+              id: 'action-002',
+              operation: 'create',
+              objectType: 'field',
+              target: 'Readiness',
+              description: 'Add Readiness on a fabricated table.',
+              properties: [
+                { key: 'airtable.baseActionId', value: 'action-001' },
+                { key: 'airtable.bootstrapTableName', value: 'Phantom' },
+              ],
+              dependsOn: ['action-001'],
+            },
+          ],
+          assumptions: [],
+          warnings: [],
+          destructiveActions: [],
+          expectedResult: 'Invalid bootstrap reference.',
+        },
+        'Set up Airtable for this project',
+      ),
+    ).rejects.toMatchObject({ code: 'AUR-PLAN-015' });
+
+    await expect(
+      planAirtable(
+        workspace,
+        store,
+        capture.output,
+        discovery,
+        {
+          proposedWorkspaceStructure: [
+            { kind: 'base', name: 'Aurous Build Week HQ', purpose: 'Launch HQ' },
+            { kind: 'field', name: 'Readiness', purpose: 'Track readiness.' },
+          ],
+          plannedActions: [
+            {
+              id: 'action-001',
+              operation: 'create',
+              objectType: 'base',
+              target: 'Aurous Build Week HQ',
+              description: 'Create the base with bootstrap tables.',
+              properties: [
+                {
+                  key: 'airtable.base.initialTables',
+                  value: JSON.stringify([
+                    {
+                      name: 'Integrations',
+                      primaryField: { name: 'Integration', type: 'singleLineText' },
+                    },
+                  ]),
+                },
+              ],
+              dependsOn: [],
+            },
+            {
+              id: 'action-002',
+              operation: 'create',
+              objectType: 'field',
+              target: 'Readiness',
+              description: 'Add Readiness without depending on the base action.',
+              properties: [
+                { key: 'airtable.baseActionId', value: 'action-001' },
+                { key: 'airtable.bootstrapTableName', value: 'Integrations' },
+              ],
+              dependsOn: [],
+            },
+          ],
+          assumptions: [],
+          warnings: [],
+          destructiveActions: [],
+          expectedResult: 'Missing transitive dependency.',
+        },
+        'Set up Airtable for this project',
+      ),
+    ).rejects.toMatchObject({ code: 'AUR-PLAN-012' });
+  });
+
+  it('binds exact Airtable reuse IDs from a sanitized discovery snapshot of the live base', async () => {
+    const { workspace, store, capture } = await fixture();
+    const discovery: DestinationDiscovery = {
+      integration: 'airtable',
+      candidates: [
+        {
+          id: 'wsphk1OmoSFXlTmwM',
+          name: 'My First Workspace',
+          kind: 'workspace',
+          description: 'Owner-accessible Airtable workspace.',
+          existingAurousMatch: true,
+        },
+      ],
+      existingObjects: [
+        {
+          id: 'apptXzRq0zEfjhz4X',
+          name: 'Aurous Build Week HQ',
+          type: 'airtable.base',
+          destinationId: 'wsphk1OmoSFXlTmwM',
+          parentId: 'wsphk1OmoSFXlTmwM',
+        },
+        {
+          id: 'tblxpUvoq8TfoFUKW',
+          name: 'Workstreams',
+          type: 'airtable.table',
+          destinationId: 'wsphk1OmoSFXlTmwM',
+          parentId: 'apptXzRq0zEfjhz4X',
+        },
+        {
+          id: 'tbl2II3FoagbaK7bn',
+          name: 'Tasks',
+          type: 'airtable.table',
+          destinationId: 'wsphk1OmoSFXlTmwM',
+          parentId: 'apptXzRq0zEfjhz4X',
+        },
+        {
+          id: 'tblzDn026xkRMGanS',
+          name: 'Integrations',
+          type: 'airtable.table',
+          destinationId: 'wsphk1OmoSFXlTmwM',
+          parentId: 'apptXzRq0zEfjhz4X',
+        },
+        {
+          id: 'fldwFFJ3qjePsyQQm',
+          name: 'Readiness',
+          type: 'airtable.field',
+          destinationId: 'wsphk1OmoSFXlTmwM',
+          parentId: 'tblzDn026xkRMGanS',
+        },
+        {
+          id: 'recAELdj1f2Fnp5gM',
+          name: 'Complete README',
+          type: 'airtable.record',
+          destinationId: 'wsphk1OmoSFXlTmwM',
+          parentId: 'tbl2II3FoagbaK7bn',
+        },
+      ],
+      inspectedAt: '2026-07-20T03:12:58.481Z',
+      warnings: [
+        'An exact existing base named "Aurous Build Week HQ" was inspected and already contains exactly the requested Workstreams, Tasks, and Integrations tables.',
+        'Another accessible base named "Untitled Base" exists; it is not a project match and should not be repurposed for this launch.',
+      ],
+    };
+    const proposal: PlanProposal = {
+      proposedWorkspaceStructure: [
+        { kind: 'base', name: 'Aurous Build Week HQ', purpose: 'Launch HQ' },
+        { kind: 'table', name: 'Workstreams', purpose: 'Track workstreams.' },
+        { kind: 'table', name: 'Tasks', purpose: 'Track tasks.' },
+        { kind: 'table', name: 'Integrations', purpose: 'Track integrations.' },
+        { kind: 'field', name: 'Readiness', purpose: 'Track readiness.' },
+        { kind: 'record', name: 'Complete README', purpose: 'Track README.' },
+      ],
+      plannedActions: [
+        {
+          id: 'action-001',
+          operation: 'create',
+          objectType: 'base',
+          target: 'Aurous Build Week HQ',
+          description: 'Create the launch base.',
+          properties: [],
+          dependsOn: [],
+        },
+        {
+          id: 'action-002',
+          operation: 'create',
+          objectType: 'table',
+          target: 'Workstreams',
+          description: 'Create Workstreams.',
+          properties: [],
+          dependsOn: [],
+        },
+        {
+          id: 'action-003',
+          operation: 'create',
+          objectType: 'table',
+          target: 'Tasks',
+          description: 'Create Tasks.',
+          properties: [],
+          dependsOn: [],
+        },
+        {
+          id: 'action-004',
+          operation: 'create',
+          objectType: 'table',
+          target: 'Integrations',
+          description: 'Create Integrations.',
+          properties: [],
+          dependsOn: [],
+        },
+        {
+          id: 'action-005',
+          operation: 'create',
+          objectType: 'field',
+          target: 'Readiness',
+          description: 'Create Readiness.',
+          properties: [],
+          dependsOn: [],
+        },
+        {
+          id: 'action-006',
+          operation: 'create',
+          objectType: 'records',
+          target: 'Complete README',
+          description: 'Create the README task.',
+          properties: [],
+          dependsOn: [],
+        },
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'Existing objects are reused by exact ID.',
+    };
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => planningAgent(discovery, proposal),
+    });
+
+    const plan = await services.plan({
+      agent: 'mock',
+      tool: 'airtable',
+      contextPaths: ['.'],
+      objective: 'Set up Airtable for README completion without duplicates.',
+    });
+
+    expect(
+      plan.plannedActions.map(
+        (action) =>
+          action.properties.find((property) => property.key === 'airtable.dedupe.knownExternalId')
+            ?.value,
+      ),
+    ).toEqual([
+      'apptXzRq0zEfjhz4X',
+      'tblxpUvoq8TfoFUKW',
+      'tbl2II3FoagbaK7bn',
+      'tblzDn026xkRMGanS',
+      'fldwFFJ3qjePsyQQm',
+      'recAELdj1f2Fnp5gM',
+    ]);
+    expect(plan.plannedActions.every((action) => action.description.startsWith('Reuse'))).toBe(
+      true,
+    );
+    expect(plan.warnings).toEqual(
+      expect.arrayContaining([expect.stringContaining('Untitled Base')]),
+    );
+  });
 });
+
+function airtableWorkspaceDiscovery(): DestinationDiscovery {
+  return {
+    integration: 'airtable',
+    candidates: [
+      {
+        id: 'wsphk1OmoSFXlTmwM',
+        name: 'My First Workspace',
+        kind: 'workspace',
+        description: 'Owner-accessible Airtable workspace.',
+        existingAurousMatch: false,
+      },
+    ],
+    existingObjects: [],
+    inspectedAt: '2026-07-20T03:00:00.000Z',
+    warnings: [],
+  };
+}
+
+async function planAirtable(
+  workspace: string,
+  store: LocalRunStore,
+  output: Output,
+  discovery: DestinationDiscovery,
+  proposal: PlanProposal,
+  objective: string,
+) {
+  const services = new AurousServices({
+    workspace,
+    store,
+    output,
+    agentFactory: () => planningAgent(discovery, proposal),
+  });
+  return services.plan({
+    agent: 'mock',
+    tool: 'airtable',
+    contextPaths: ['.'],
+    objective,
+  });
+}
 
 function linearIssue(id: string, target: string, description: string) {
   return {

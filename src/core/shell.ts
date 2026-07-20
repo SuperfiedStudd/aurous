@@ -818,8 +818,11 @@ export function createReadlineShellTerminal(
 }
 
 export function routeNaturalRequest(request: string, currentTarget: ToolName): ToolName {
-  if (/\blinear\b/i.test(request)) return 'linear';
-  if (/\bnotion\b/i.test(request)) return 'notion';
+  const directTarget = request
+    .match(/^\s*(?:set\s+up|create|build|organize)\s+(?:an?\s+)?(airtable|linear|notion)\b/i)?.[1]
+    ?.toLocaleLowerCase();
+  if (directTarget === 'airtable' || directTarget === 'linear' || directTarget === 'notion')
+    return directTarget;
   return currentTarget;
 }
 

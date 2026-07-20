@@ -49,7 +49,12 @@ export function buildPlanningPrompt(
   productivity: ProductivityAdapter,
   destination: import('../../domain/destinations.js').ResolvedDestination,
 ): string {
+  const preferredPaths = context.summary.files
+    .filter((file) => ['readme', 'documentation', 'manifest'].includes(file.category))
+    .map((file) => file.relativePath);
   const documents = context.documents
+    .filter((document) => preferredPaths.includes(document.relativePath))
+    .slice(0, 12)
     .map(
       (document) =>
         `<document path=${JSON.stringify(document.relativePath)}>\n${document.content}\n</document>`,

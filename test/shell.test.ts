@@ -445,6 +445,18 @@ describe('shell parsing and routing', () => {
   it('routes explicit integration names and otherwise preserves the active target', () => {
     expect(routeNaturalRequest('Set up Linear for this project', 'notion')).toBe('linear');
     expect(routeNaturalRequest('Create a Notion workspace', 'linear')).toBe('notion');
+    expect(
+      routeNaturalRequest(
+        'Set up Airtable for readiness across Notion, Linear, and Airtable.',
+        'notion',
+      ),
+    ).toBe('airtable');
+    expect(
+      routeNaturalRequest(
+        'Create an Airtable base that tracks Notion and Linear readiness.',
+        'linear',
+      ),
+    ).toBe('airtable');
     expect(routeNaturalRequest('Organize my current project', 'notion')).toBe('notion');
   });
 
