@@ -1,6 +1,21 @@
+import type { DiscoveredObject, ResolvedDestination } from '../../domain/destinations.js';
 import { AurousError } from '../../core/errors.js';
-import type { CreatedObject, ExecutionResult, SkippedAction } from '../../domain/schemas.js';
-import { isLinearIssueUuid, looksLikeIssueKey, normalizedObjectType } from './exact-bindings.js';
+import type {
+  CreatedObject,
+  ExecutionResult,
+  PlanAction,
+  SkippedAction,
+} from '../../domain/schemas.js';
+import {
+  isLinearIssueUuid,
+  linearIssueKeyFromObject,
+  looksLikeIssueKey,
+  normalizedObjectType,
+  propertyValue,
+} from './exact-bindings.js';
+
+/** Canonical MCP identity for Linear issues when the provider exposes only a TEAM-NUMBER key. */
+export const LINEAR_ISSUE_KEY_IDENTITY = 'linear-issue-key' as const;
 
 export interface LinearIssueLookupMatch {
   id: string;
@@ -14,7 +29,7 @@ export interface LinearIssueIdentityInput {
   identifier?: string | null;
   url?: string | null;
   name?: string;
-  /** Optional exact key→UUID lookup results for key-only create responses. */
+  /** Optional exact key→UUID lookup results when a UUID is available. */
   lookupMatches?: LinearIssueLookupMatch[];
 }
 
@@ -22,11 +37,12 @@ export interface LinearIssueIdentity {
   externalId: string;
   identifier?: string;
   url?: string;
+  identityType?: typeof LINEAR_ISSUE_KEY_IDENTITY;
 }
 
 /**
- * Resolve immutable Linear issue UUID vs display key from a create/skip result payload.
- * Never returns a KEY-shaped value as externalId.
+ * Resolve Linear issue identity from a create/skip result.
+ * Prefers UUID when present; otherwise persists a well-formed MCP issue key as canonical externalId.
  */
 export function resolveLinearIssueIdentity(input: LinearIssueIdentityInput): LinearIssueIdentity {
   const externalId = trim(input.externalId);
@@ -67,40 +83,41 @@ export function resolveLinearIssueIdentity(input: LinearIssueIdentityInput): Lin
         ...(url || match.url ? { url: url ?? match.url } : {}),
       };
     }
-    if (exact.length === 0) {
+    if (exact.length > 1) {
       throw linearIdentityError(
-        `Linear issue key ${JSON.stringify(keyCandidate)} could not be resolved to exactly one immutable UUID.`,
-        matches.length === 0
-          ? 'Create/lookup returned only a human-readable issue key, or zero UUID matches.'
-          : 'Lookup matches existed but none paired the issue key with an immutable UUID.',
+        `Linear issue key ${JSON.stringify(keyCandidate)} resolved to ${exact.length} immutable UUIDs.`,
+        'Issue-key lookup was ambiguous before persistence.',
       );
     }
-    throw linearIdentityError(
-      `Linear issue key ${JSON.stringify(keyCandidate)} resolved to ${exact.length} immutable UUIDs.`,
-      'Issue-key lookup was ambiguous before persistence.',
-    );
+    // Official Linear MCP often exposes only the fetchable issue key. Persist it as the
+    // provider canonical identity (not as a UUID) when no UUID lookup succeeded.
+    return {
+      externalId: keyCandidate,
+      identifier: keyCandidate,
+      identityType: LINEAR_ISSUE_KEY_IDENTITY,
+      ...(url ? { url } : {}),
+    };
   }
 
   if (externalId && !isLinearIssueUuid(externalId) && !looksLikeIssueKey(externalId)) {
     throw linearIdentityError(
       `Linear issue identity ${JSON.stringify(externalId)} is neither a UUID nor an issue key.`,
-      'The create response did not include a usable immutable issue UUID.',
+      'The create response did not include a usable Linear issue identity.',
     );
   }
 
   throw linearIdentityError(
-    'Linear issue create/skip result omitted an immutable issue UUID.',
-    'The MCP response did not expose a UUID and no exact key lookup was available.',
+    'Linear issue create/skip result omitted a usable issue identity.',
+    'The MCP response did not expose a UUID or a well-formed issue key.',
   );
 }
 
 export function assertLinearAuthorizationId(value: string, label: string): void {
-  if (looksLikeIssueKey(value) || !isLinearIssueUuid(value)) {
-    throw linearIdentityError(
-      `${label} cannot use ${JSON.stringify(value)}; an immutable Linear issue UUID is required.`,
-      'A KEY-shaped or non-UUID value entered an authorization ID field.',
-    );
-  }
+  if (isLinearIssueUuid(value) || looksLikeIssueKey(value)) return;
+  throw linearIdentityError(
+    `${label} cannot use ${JSON.stringify(value)}; a Linear issue UUID or verified issue key is required.`,
+    'A non-canonical value entered an authorization ID field.',
+  );
 }
 
 export function normalizeLinearExecutionIdentities(result: ExecutionResult): ExecutionResult {
@@ -115,6 +132,84 @@ export function normalizeLinearExecutionIdentities(result: ExecutionResult): Exe
   };
 }
 
+/** True when the action carries a fully structured Linear issue-key identity claim. */
+export function hasLinearIssueKeyIdentityClaim(action: PlanAction): boolean {
+  return (
+    propertyValue(action.properties, 'linear.identityType') === LINEAR_ISSUE_KEY_IDENTITY &&
+    Boolean(propertyValue(action.properties, 'linear.issueKey')) &&
+    Boolean(propertyValue(action.properties, 'linear.dedupe.knownExternalId'))
+  );
+}
+
+/**
+ * Authorize a Linear issue-key identity only when discovery uniquely verified that key
+ * on the connected team. Planner/prose-only keys never pass.
+ */
+export function resolveVerifiedLinearIssueKey(
+  action: PlanAction,
+  destination: ResolvedDestination,
+): DiscoveredObject | undefined {
+  if (destination.integration !== 'linear') return undefined;
+  if (normalizedObjectType(action.objectType) !== 'issue') return undefined;
+  if (propertyValue(action.properties, 'linear.identityType') !== LINEAR_ISSUE_KEY_IDENTITY) {
+    return undefined;
+  }
+
+  const issueKey = propertyValue(action.properties, 'linear.issueKey');
+  const knownId = propertyValue(action.properties, 'linear.dedupe.knownExternalId');
+  if (!issueKey || !knownId) return undefined;
+  if (!looksLikeIssueKey(issueKey) || !looksLikeIssueKey(knownId)) {
+    throw unverifiedLinearIssueKeyError(
+      action,
+      `Issue key fields must match Linear TEAM-NUMBER format; got ${JSON.stringify(issueKey)} / ${JSON.stringify(knownId)}.`,
+    );
+  }
+  if (issueKey.toLocaleUpperCase() !== knownId.toLocaleUpperCase()) {
+    throw unverifiedLinearIssueKeyError(
+      action,
+      `linear.issueKey ${JSON.stringify(issueKey)} does not match linear.dedupe.knownExternalId ${JSON.stringify(knownId)}.`,
+    );
+  }
+
+  const teamId = propertyValue(action.properties, 'linear.teamId') ?? destination.id;
+  if (teamId !== destination.id) {
+    throw unverifiedLinearIssueKeyError(
+      action,
+      `linear.teamId ${JSON.stringify(teamId)} does not match the connected team ${JSON.stringify(destination.id)}.`,
+    );
+  }
+
+  const matches = destination.existingObjects.filter(
+    (object) =>
+      normalizedObjectType(object.type) === 'issue' &&
+      object.destinationId === destination.id &&
+      discoveredIssueKey(object)?.toLocaleUpperCase() === issueKey.toLocaleUpperCase(),
+  );
+  if (matches.length === 0) {
+    throw unverifiedLinearIssueKeyError(
+      action,
+      `Discovered Linear issues do not include verified key ${JSON.stringify(issueKey)}.`,
+    );
+  }
+  if (matches.length > 1) {
+    throw unverifiedLinearIssueKeyError(
+      action,
+      `Discovered Linear key ${JSON.stringify(issueKey)} matched ${matches.length} issues.`,
+    );
+  }
+  return matches[0];
+}
+
+export function discoveredIssueKey(object: DiscoveredObject): string | undefined {
+  if (looksLikeIssueKey(object.id)) return object.id;
+  return linearIssueKeyFromObject(object);
+}
+
+export function isCanonicalLinearIssueIdentity(object: DiscoveredObject): boolean {
+  if (normalizedObjectType(object.type) !== 'issue') return true;
+  return isLinearIssueUuid(object.id) || looksLikeIssueKey(object.id);
+}
+
 function normalizeLinearResultObject<T extends CreatedObject | SkippedAction>(
   object: T,
   kind: 'created' | 'skipped',
@@ -127,7 +222,6 @@ function normalizeLinearResultObject<T extends CreatedObject | SkippedAction>(
     (value) => value && looksLikeIssueKey(value),
   );
   const hasUuid = [externalId, identifier].some((value) => value && isLinearIssueUuid(value));
-  // Enforce UUID/key separation only for live-style Linear identities. Mock IDs stay untouched.
   if (!hasKeyShape && !hasUuid) return object;
 
   const resolved = resolveLinearIssueIdentity({
@@ -145,13 +239,23 @@ function normalizeLinearResultObject<T extends CreatedObject | SkippedAction>(
   };
 }
 
+function unverifiedLinearIssueKeyError(action: PlanAction, probableCause: string): AurousError {
+  return new AurousError({
+    code: 'AUR-PLAN-010',
+    summary: `Action ${action.id} cannot authorize a Linear issue with an unverified issue key.`,
+    probableCause,
+    nextAction:
+      'No writes were attempted. Re-run Linear discovery and bind a uniquely inspected issue key with linear.identityType=linear-issue-key.',
+  });
+}
+
 function linearIdentityError(summary: string, probableCause: string): AurousError {
   return new AurousError({
     code: 'AUR-APPLY-005',
     summary,
     probableCause,
     nextAction:
-      'Stop before persisting identity. Re-fetch the issue by exact key, require exactly one UUID, then retry reporting externalId as the UUID and identifier as the issue key.',
+      'Stop before persisting identity. Re-fetch the issue, require a usable Linear MCP identity, then retry.',
     severity: 'recoverable',
   });
 }

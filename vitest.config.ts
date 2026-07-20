@@ -4,5 +4,6 @@ export default defineConfig({
   test: {
     coverage: { reporter: ['text', 'html'] },
     testTimeout: 15_000,
+    exclude: ['**/node_modules/**', '**/dist/**', '**/site/**'],
   },
 });

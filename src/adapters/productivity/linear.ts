@@ -11,7 +11,6 @@ import { AurousError } from '../../core/errors.js';
 import {
   exactBindingWarnings,
   isLinearIssueUuid,
-  linearIssueKeyFromObject,
   looksLikeIssueKey,
   normalizeNullishProperties,
   normalizeRelationAction,
@@ -21,6 +20,11 @@ import {
   setProperty,
   stampExactExternalId,
 } from './exact-bindings.js';
+import {
+  LINEAR_ISSUE_KEY_IDENTITY,
+  discoveredIssueKey,
+  isCanonicalLinearIssueIdentity,
+} from './linear-identity.js';
 
 export class LinearAdapter implements ProductivityAdapter {
   readonly name = 'linear' as const;
@@ -37,11 +41,11 @@ export class LinearAdapter implements ProductivityAdapter {
     discoveryInstructions: `Use only the official Linear MCP and perform read-only calls. Discover every accessible team and preserve each exact team ID and friendly name. For each team, inspect matching projects, milestones, labels, and issues relevant to the supplied project name and objective.
 
 LINEAR ISSUE IDENTITY CONTRACT:
-- Official Linear MCP issue payloads expose BOTH an immutable UUID and a human-readable key such as JAS-17. These are different values.
-- existingObjects[].id MUST be the immutable Linear issue UUID. Prefer any UUID-shaped field on the issue object (commonly id, uuid, or issueId when that field is UUID-shaped). Never put a TEAM-NUMBER key in existingObjects[].id even when the MCP labels that key as "id".
-- Put the human-readable key such as JAS-17 only in existingObjects[].identifier (and the URL when present).
-- When list_issues or get_issue returns a KEY-shaped primary id, call get_issue for that exact key once and extract the UUID-shaped issue identity from the same payload. Require exactly one issue UUID; do not invent IDs and do not confuse team, project, milestone, label, or state UUIDs for the issue UUID.
-- Only omit an exact-title issue when the MCP response truly contains no UUID-shaped issue identity. If a UUID is present alongside JAS-17, include the issue.
+- Official Linear MCP commonly exposes the human-readable issue key such as JAS-17 as the only stable fetchable issue identity.
+- For every inspected issue, set existingObjects[].id to the MCP-canonical issue identity: prefer a UUID when the MCP returns a fetchable UUID; otherwise use the exact TEAM-NUMBER issue key returned by get_issue/list_issues.
+- Always put the human-readable key in existingObjects[].identifier as well when known.
+- Include an issue only when discovery found exactly one match for that identity in the approved team. Zero or ambiguous matches must be omitted with a warning.
+- Never invent IDs. Never put prose titles in existingObjects[].id.
 - Mark an existingAurousMatch only when an exact object inspection supports it. Never create, update, archive, or delete anything.`,
   } as const;
 
@@ -53,7 +57,7 @@ LINEAR ISSUE IDENTITY CONTRACT:
   }
 
   destinationPlanningInstructions(destination: ResolvedDestination): string {
-    return `The exact approved Linear team ID is ${JSON.stringify(destination.id)} (${destination.name}). Put linear.teamId=${JSON.stringify(destination.id)} and linear.team=${JSON.stringify(destination.name)} on every action. Existing projects, milestones, labels, and issues may be reused only by exact UUIDs from the discovery snapshot. When reusing an issue, set both linear.issueId and linear.dedupe.knownExternalId to the exact discovered issue UUID. Keep linear.issueKey for the human-readable identifier such as JAS-17 as display/lookup metadata only—an issue key never authorizes mutation. When an issue belongs to an inspected existing project, include both linear.project (friendly display name) and linear.projectId (its exact discovered ID). Likewise pair existing milestone and label names with linear.milestoneId and linear.labelIds. Exact UUIDs authorize relationships and reuse; names and issue keys alone never do.`;
+    return `The exact approved Linear team ID is ${JSON.stringify(destination.id)} (${destination.name}). Put linear.teamId=${JSON.stringify(destination.id)} and linear.team=${JSON.stringify(destination.name)} on every action. Existing projects, milestones, labels, and issues may be reused only by exact identities from the discovery snapshot. When reusing an issue discovered by UUID, set both linear.issueId and linear.dedupe.knownExternalId to that UUID. When reusing an issue discovered only by its MCP issue key, set linear.identityType=${JSON.stringify(LINEAR_ISSUE_KEY_IDENTITY)}, linear.issueKey to that key, and linear.dedupe.knownExternalId to the same key—never invent a UUID. Names and prose alone never authorize mutation. When an issue belongs to an inspected existing project, include both linear.project (friendly display name) and linear.projectId (its exact discovered ID). Likewise pair existing milestone and label names with linear.milestoneId and linear.labelIds.`;
   }
 
   bindDestination(proposal: PlanProposal, destination: ResolvedDestination): PlanProposal {
@@ -77,7 +81,8 @@ LINEAR ISSUE IDENTITY CONTRACT:
               (property.key === 'linear.dedupe.knownExternalId' ||
                 property.key === 'linear.dedupe.knownUrl' ||
                 property.key === 'linear.issueId' ||
-                property.key === 'linear.issueKey')
+                property.key === 'linear.issueKey' ||
+                property.key === 'linear.identityType')
             )
               return false;
             return true;
@@ -91,14 +96,22 @@ LINEAR ISSUE IDENTITY CONTRACT:
         if (existing) {
           bound = stampExactExternalId(bound, existing, 'linear', 'Reuse');
           const issueKey =
-            linearIssueKeyFromObject(existing) ??
+            discoveredIssueKey(existing) ??
             [
               propertyValue(action.properties, ['linear.issueKey', 'issueKey']),
               propertyValue(action.properties, ['linear.issueId', 'issueId']),
               action.target,
             ].find((value) => value && looksLikeIssueKey(value));
-          if (issueKey) setProperty(bound.properties, 'linear.issueKey', issueKey);
-          setProperty(bound.properties, 'linear.issueId', existing.id);
+          if (looksLikeIssueKey(existing.id) && !isLinearIssueUuid(existing.id)) {
+            const key = issueKey ?? existing.id;
+            setProperty(bound.properties, 'linear.identityType', LINEAR_ISSUE_KEY_IDENTITY);
+            setProperty(bound.properties, 'linear.issueKey', key);
+            setProperty(bound.properties, 'linear.dedupe.knownExternalId', key);
+            setProperty(bound.properties, 'linear.issueId', key);
+          } else {
+            if (issueKey) setProperty(bound.properties, 'linear.issueKey', issueKey);
+            setProperty(bound.properties, 'linear.issueId', existing.id);
+          }
         }
         bindLinearRelationshipIds(bound.properties, destination);
         return bound;
@@ -129,13 +142,13 @@ LINEAR DEMO CONTRACT:
 - Resolve only the exact approved team ID from linear.teamId. linear.team is display-only. Before writes, inspect that team's statuses and resolve the assignee token. Never select a different team.
 - Resolve project, milestone, and label relationships from linear.projectId, linear.milestoneId, and linear.labelIds when present. Their friendly-name properties are display-only and cannot authorize a relationship.
 - Execute actions in dependency order. Map linear.* properties directly to the official MCP fields for project, issue label, milestone, and issue creation.
-- If an action has linear.dedupe.knownExternalId, fetch that exact UUID first and verify its type, title/name, approved team, and approved project where applicable. linear.issueKey is display-only and never authorizes a write. A compatible exact-ID match must be skipped and is authoritative even if same-title duplicates exist. Exclude that action from all name inventories. If exact-ID verification fails, fail the action and do not fall back to name lookup or creation.
+- If an action has linear.dedupe.knownExternalId, fetch that exact MCP identity first (UUID, or TEAM-NUMBER key when linear.identityType=linear-issue-key) and verify its type, title/name, approved team, and approved project where applicable. A compatible exact-ID match must be skipped and is authoritative even if same-title duplicates exist. Exclude that action from all name inventories. If exact-ID verification fails, fail the action and do not fall back to name lookup or creation. Never invent a UUID when only an issue key is present.
 - Label exact-ID verification uses the MCP capability that actually exists: call list_issue_labels once for the approved team with limit 250 and no name filter, locate each known label by its exact ID, then verify its exact name. This is exact-ID verification, not name fallback. If the known label ID is absent or its name differs, fail that action and never create a replacement.
 - For approved targets without a known external ID, perform narrowly scoped exact-name lookup using the approved team/project. Do not browse unrelated objects.
 - For issue actions without linear.dedupe.knownExternalId, deduplication is a mandatory single inventory step: call list_issues once for the approved team and project with limit 250 and no query, assignee, state, label, or ordering filters. Compare only the unguarded approved issue targets against the returned titles case-sensitively. Never use list_issues.query for deduplication. If every approved issue action has a known external ID, do not call list_issues. If one or more exact-title matches exist for an unguarded action, do not create it; skip a single compatible match and fail visibly on ambiguous or incompatible matches.
 - If exactly one compatible target already exists, make no write, include the action ID in completedActionIds, and add a skippedActions entry with its exact ID and URL. If matches are ambiguous or incompatible, fail the action visibly.
-- createdObjects contains only objects written by this run. For every created or skipped Linear issue, set externalId to the immutable Linear issue UUID from the MCP payload (UUID-shaped id/uuid/issueId field), and set identifier to the human-readable key such as JAS-17. Never put JAS-17 (or any TEAM-NUMBER key) in externalId, linear.issueId, or linear.dedupe.knownExternalId—even when the MCP labels the key as "id".
-- After save_issue (or equivalent create), call get_issue on the returned key or UUID. Extract the UUID-shaped issue identity from that payload. If the create payload exposes only the issue key, perform exactly one read-only get_issue/list lookup by that key, require exactly one UUID-shaped issue id in the result, then persist that UUID as externalId and the key as identifier. Zero or multiple UUID matches must fail the action visibly.
+- createdObjects contains only objects written by this run. For every created or skipped Linear issue, set externalId to the MCP-canonical fetchable identity: prefer a UUID when the MCP returns one; otherwise use the TEAM-NUMBER issue key. Always set identifier to the human-readable key such as JAS-17 when known.
+- After save_issue (or equivalent create), call get_issue on the returned key. Prefer persisting a UUID when the payload exposes a fetchable UUID-shaped issue identity. If the MCP exposes only the issue key, persist that key as externalId and identifier—do not invent a UUID.
 - Preserve the exact URL returned by Linear when available; do not invent IDs or URLs.
 - Preserve project relationships, milestone relationships, descriptions, numeric priorities, states, assignee, and labels exactly when supported.
 - The connected MCP supports create_issue_label, save_project, save_milestone, and save_issue. Do not substitute documents, cycles, or comments.
@@ -144,30 +157,51 @@ LINEAR DEMO CONTRACT:
   }
 }
 
-/** Reject Linear discovery payloads that used issue keys where immutable UUIDs are required. */
+/** Accept Linear MCP issue identities: fetchable UUID or uniquely verified TEAM-NUMBER key. */
 export function validateLinearDiscoveryIssues(discovery: DestinationDiscovery): void {
   const issues = discovery.existingObjects.filter((object) => exactObjectTypeMatchesIssue(object));
   for (const issue of issues) {
-    if (!isLinearIssueUuid(issue.id)) {
+    if (!isCanonicalLinearIssueIdentity(issue)) {
       throw new AurousError({
         code: 'AUR-DEST-010',
-        summary: `Linear discovery reported issue ${JSON.stringify(issue.name)} without an immutable UUID.`,
-        probableCause: looksLikeIssueKey(issue.id)
-          ? `The human-readable key ${JSON.stringify(issue.id)} was used as existingObjects[].id.`
-          : 'The inspected issue ID was not a Linear issue UUID.',
+        summary: `Linear discovery reported issue ${JSON.stringify(issue.name)} without a usable MCP issue identity.`,
+        probableCause:
+          'The inspected issue ID was neither a Linear issue UUID nor a well-formed TEAM-NUMBER issue key.',
         nextAction:
-          'No writes occurred. Re-run discovery and set each issue id to its UUID, keeping JAS-style keys in identifier only.',
+          'No writes occurred. Re-run discovery and set each issue id to its MCP-canonical identity (UUID or issue key).',
       });
     }
-    const key = linearIssueKeyFromObject(issue);
+    if (!issue.destinationId) {
+      throw new AurousError({
+        code: 'AUR-DEST-010',
+        summary: `Linear discovery reported issue ${JSON.stringify(issue.name)} without a team destinationId.`,
+        probableCause: 'Issue identity cannot be scoped to the connected Linear team.',
+        nextAction:
+          'No writes occurred. Re-run discovery and attach the approved team ID to each issue.',
+      });
+    }
+    const candidateIds = new Set(discovery.candidates.map((candidate) => candidate.id));
+    if (candidateIds.size > 0 && !candidateIds.has(issue.destinationId)) {
+      throw new AurousError({
+        code: 'AUR-DEST-010',
+        summary: `Linear discovery reported issue ${JSON.stringify(issue.name)} on team ${JSON.stringify(issue.destinationId)} outside the discovered candidates.`,
+        probableCause:
+          'Issue identity was not scoped to an accessible Linear team in this discovery.',
+        nextAction:
+          'No writes occurred. Re-run discovery and keep each issue within an inspected team.',
+      });
+    }
+    const key = discoveredIssueKey(issue);
     if (key) {
       const collisions = issues.filter(
-        (candidate) => candidate.id !== issue.id && linearIssueKeyFromObject(candidate) === key,
+        (candidate) =>
+          candidate.id !== issue.id &&
+          discoveredIssueKey(candidate)?.toLocaleUpperCase() === key.toLocaleUpperCase(),
       );
       if (collisions.length > 0) {
         throw new AurousError({
           code: 'AUR-DEST-010',
-          summary: `Linear discovery mapped issue key ${JSON.stringify(key)} to multiple issue UUIDs.`,
+          summary: `Linear discovery mapped issue key ${JSON.stringify(key)} to multiple issues.`,
           probableCause: 'Issue-key lookup would be ambiguous before planning authorization.',
           nextAction:
             'No writes occurred. Narrow discovery or resolve the duplicate key mapping before planning.',

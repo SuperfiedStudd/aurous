@@ -18,7 +18,11 @@ import {
   validateAirtableRelationBinding,
 } from '../adapters/productivity/airtable-relations.js';
 import { materializeAirtableCompletedNoOpProposal } from '../adapters/productivity/airtable-noop.js';
-import { normalizeLinearExecutionIdentities } from '../adapters/productivity/linear-identity.js';
+import {
+  LINEAR_ISSUE_KEY_IDENTITY,
+  normalizeLinearExecutionIdentities,
+  resolveVerifiedLinearIssueKey,
+} from '../adapters/productivity/linear-identity.js';
 import { validateLinearDiscoveryIssues } from '../adapters/productivity/linear.js';
 import {
   AgentNameSchema,
@@ -557,6 +561,9 @@ export class AurousServices {
           return action;
         const reference = references.get(`${action.objectType}\u0000${action.target}`);
         if (!reference) return action;
+        const isIssueKey =
+          looksLikeIssueKey(reference.externalId) &&
+          exactObjectTypeMatches('linear', action.objectType, 'issue');
         return {
           ...action,
           properties: [
@@ -567,6 +574,13 @@ export class AurousServices {
               key: 'linear.dedupe.identitySource',
               value: `verified-run:${reference.sourceRunId}`,
             },
+            ...(isIssueKey
+              ? [
+                  { key: 'linear.identityType', value: LINEAR_ISSUE_KEY_IDENTITY },
+                  { key: 'linear.issueKey', value: reference.externalId },
+                  { key: 'linear.issueId', value: reference.externalId },
+                ]
+              : []),
           ],
         };
       }),
@@ -1912,23 +1926,32 @@ function validateExactObjectAuthorizations(
           'No writes were attempted. Inspect the object by exact ID or regenerate this action as an explicit create decision.',
       });
     }
+    let verifiedLinearIssueKey: ReturnType<typeof resolveVerifiedLinearIssueKey> | undefined;
     if (tool === 'linear' && exactObjectTypeMatches('linear', action.objectType, 'issue')) {
-      for (const field of ['linear.dedupe.knownExternalId', 'linear.issueId'] as const) {
+      const identityType = action.properties.find(
+        (property) => property.key === 'linear.identityType',
+      )?.value;
+      const keyAuthFields = ['linear.dedupe.knownExternalId', 'linear.issueId'] as const;
+      const keyShapedAuth = keyAuthFields.some((field) => {
         const value = action.properties.find((property) => property.key === field)?.value;
-        if (value && looksLikeIssueKey(value)) {
+        return Boolean(value && looksLikeIssueKey(value));
+      });
+      if (keyShapedAuth || identityType === LINEAR_ISSUE_KEY_IDENTITY) {
+        if (identityType !== LINEAR_ISSUE_KEY_IDENTITY) {
           throw new AurousError({
             code: 'AUR-PLAN-010',
-            summary: `Action ${action.id} cannot authorize a Linear issue update with issue key ${JSON.stringify(value)}.`,
+            summary: `Action ${action.id} cannot authorize a Linear issue update with an unverified issue key.`,
             probableCause:
-              'A human-readable issue key was used where the immutable Linear issue UUID is required.',
+              'A TEAM-NUMBER issue key entered an authorization field without linear.identityType=linear-issue-key from verified discovery.',
             nextAction:
-              'No writes were attempted. Bind linear.issueId and linear.dedupe.knownExternalId to the discovered UUID; keep the key only in linear.issueKey.',
+              'No writes were attempted. Bind a uniquely discovered Linear issue key with linear.identityType, linear.issueKey, and linear.dedupe.knownExternalId, or use a discovered UUID.',
           });
         }
+        verifiedLinearIssueKey = resolveVerifiedLinearIssueKey(action, destination);
       }
     }
     if (knownId) {
-      const inspected = inspectedById.get(knownId);
+      const inspected = inspectedById.get(knownId) ?? verifiedLinearIssueKey;
       const previouslyVerified = action.properties
         .find((property) => property.key === `${namespace}.dedupe.identitySource`)
         ?.value.match(/^verified-run:run-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{6}$/);

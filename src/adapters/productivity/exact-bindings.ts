@@ -42,6 +42,7 @@ export function resolveExactObject(
   tool: ToolName = destination.integration,
   parentId?: string,
 ): DiscoveredObject | undefined {
+  const scopedParent = effectiveParentScope(parentId);
   const namespace = bindingNamespace(tool);
   const persisted = propertyValue(action.properties, `${namespace}.dedupe.knownExternalId`);
   if (persisted) {
@@ -49,7 +50,7 @@ export function resolveExactObject(
     if (
       exact &&
       exactObjectTypeMatches(tool, exact.type, action.objectType) &&
-      (parentId === undefined || (exact.parentId ?? destination.id) === parentId)
+      (scopedParent === undefined || (exact.parentId ?? destination.id) === scopedParent)
     ) {
       return exact;
     }
@@ -63,7 +64,7 @@ export function resolveExactObject(
       .filter(
         (object) =>
           exactObjectTypeMatches(tool, object.type, action.objectType) &&
-          (parentId === undefined || (object.parentId ?? destination.id) === parentId),
+          (scopedParent === undefined || (object.parentId ?? destination.id) === scopedParent),
       ),
   );
   if (byStructuredId.length > 1) {
@@ -81,13 +82,13 @@ export function resolveExactObject(
         destination,
         { objectType: action.objectType, target: name },
         tool,
-        parentId,
+        scopedParent,
       ),
     ),
   );
   if (byName.length > 1) {
     const parentKeys = new Set(byName.map((object) => object.parentId ?? destination.id));
-    if (parentKeys.size > 1 && parentId === undefined)
+    if (parentKeys.size > 1 && scopedParent === undefined)
       throw ambiguousExactBindingError(action, byName);
   }
   if (byName[0]) {
@@ -102,7 +103,7 @@ export function resolveExactObject(
         destination.existingObjects.filter(
           (object) =>
             normalizedObjectType(object.type) === 'issue' &&
-            (parentId === undefined || (object.parentId ?? destination.id) === parentId) &&
+            (scopedParent === undefined || (object.parentId ?? destination.id) === scopedParent) &&
             (object.identifier === key ||
               linearIssueKeyFromObject(object) === key ||
               object.id === key),
@@ -138,16 +139,16 @@ export function linearIssueKeyFromObject(object: DiscoveredObject): string | und
 
 export function assertLinearIssueHasUuid(object: DiscoveredObject, action?: PlanAction): void {
   if (!exactObjectTypeMatches('linear', object.type, 'issue')) return;
-  if (isLinearIssueUuid(object.id)) return;
+  if (isLinearIssueUuid(object.id) || looksLikeIssueKey(object.id)) return;
   throw new AurousError({
     code: 'AUR-PLAN-010',
     summary: action
-      ? `Action ${action.id} matched Linear issue ${JSON.stringify(object.name)}, but discovery did not provide an immutable issue UUID.`
-      : `Linear issue ${JSON.stringify(object.name)} is missing an immutable issue UUID.`,
+      ? `Action ${action.id} matched Linear issue ${JSON.stringify(object.name)}, but discovery did not provide a usable Linear MCP issue identity.`
+      : `Linear issue ${JSON.stringify(object.name)} is missing a usable Linear MCP issue identity.`,
     probableCause:
-      'Discovery returned a human-readable issue key where the immutable Linear issue UUID was required.',
+      'Discovery returned neither an immutable issue UUID nor a well-formed Linear issue key.',
     nextAction:
-      'No writes were attempted. Re-run Linear discovery and resolve each issue to its UUID before planning.',
+      'No writes were attempted. Re-run Linear discovery and resolve each issue to its MCP-canonical identity before planning.',
   });
 }
 
@@ -221,7 +222,18 @@ export function normalizeNullishProperties(
 
 export function isNullishPropertyValue(value: string): boolean {
   const trimmed = value.trim();
-  return trimmed === '' || trimmed === 'null' || trimmed === 'undefined';
+  return (
+    trimmed === '' ||
+    trimmed === 'null' ||
+    trimmed === 'undefined' ||
+    /^(?:none|n\/a|na|unchanged|-)$/i.test(trimmed)
+  );
+}
+
+/** Ignore sentinel parent IDs so exact binding is not falsely scoped away. */
+export function effectiveParentScope(parentId?: string): string | undefined {
+  if (parentId === undefined || isNullishPropertyValue(parentId)) return undefined;
+  return parentId;
 }
 
 export function propertyValue(
@@ -444,11 +456,15 @@ function candidateLookupNames(action: PlanAction, tool: ToolName): string[] {
 }
 
 function candidateIssueKeys(action: PlanAction): string[] {
-  return compact([
-    action.target,
-    propertyValue(action.properties, ['linear.issueId', 'issueId']),
-    propertyValue(action.properties, ['linear.issueKey', 'issueKey', 'linear.identifier']),
-  ]).filter(looksLikeIssueKey);
+  return [
+    ...new Set(
+      compact([
+        action.target,
+        propertyValue(action.properties, ['linear.issueId', 'issueId']),
+        propertyValue(action.properties, ['linear.issueKey', 'issueKey', 'linear.identifier']),
+      ]).filter(looksLikeIssueKey),
+    ),
+  ];
 }
 
 function requiresIssueKeyResolution(action: PlanAction): boolean {
@@ -465,11 +481,11 @@ function requiresIssueKeyResolution(action: PlanAction): boolean {
 function unresolvedLinearIssueKeyError(action: PlanAction, issueKeys: string[]): AurousError {
   return new AurousError({
     code: 'AUR-PLAN-010',
-    summary: `Action ${action.id} could not resolve Linear issue key ${JSON.stringify(issueKeys.join(', '))} to exactly one immutable issue UUID.`,
+    summary: `Action ${action.id} could not resolve Linear issue key ${JSON.stringify(issueKeys.join(', '))} to exactly one discovered issue identity.`,
     probableCause:
-      'Issue-key lookup returned zero inspected issues, or the key was never paired with a UUID during discovery.',
+      'Issue-key lookup returned zero inspected issues for the approved team, or the key was not uniquely discovered.',
     nextAction:
-      'No writes were attempted. Re-run Linear discovery and bind the exact issue UUID before preview.',
+      'No writes were attempted. Re-run Linear discovery and bind the MCP-canonical issue identity before preview.',
   });
 }
 

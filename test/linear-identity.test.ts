@@ -64,14 +64,35 @@ describe('Linear live UUID identity persistence', () => {
     });
   });
 
-  it('fails safely when key-only lookup returns zero or multiple UUID matches', () => {
-    expect(() =>
-      resolveLinearIssueIdentity({
-        externalId: issueKey,
-        lookupMatches: [],
-      }),
-    ).toThrow(/could not be resolved to exactly one immutable UUID/);
+  it('persists a key-only create response as linear-issue-key identity when UUID lookup is unavailable', () => {
+    const resolved = resolveLinearIssueIdentity({
+      externalId: issueKey,
+      identifier: issueKey,
+    });
+    expect(resolved).toEqual({
+      externalId: issueKey,
+      identifier: issueKey,
+      identityType: 'linear-issue-key',
+    });
 
+    const normalized = normalizeLinearExecutionIdentities(
+      executionResult([
+        {
+          actionId: 'action-001',
+          type: 'issue',
+          name: issueTitle,
+          externalId: issueKey,
+          identifier: issueKey,
+        },
+      ]),
+    );
+    expect(normalized.createdObjects[0]).toMatchObject({
+      externalId: issueKey,
+      identifier: issueKey,
+    });
+  });
+
+  it('fails safely when key-only UUID lookup returns multiple matches', () => {
     expect(() =>
       resolveLinearIssueIdentity({
         externalId: issueKey,
@@ -81,26 +102,14 @@ describe('Linear live UUID identity persistence', () => {
         ],
       }),
     ).toThrow(/resolved to 2 immutable UUIDs/);
-
-    expect(() =>
-      normalizeLinearExecutionIdentities(
-        executionResult([
-          {
-            actionId: 'action-001',
-            type: 'issue',
-            name: issueTitle,
-            externalId: issueKey,
-          },
-        ]),
-      ),
-    ).toThrow(/could not be resolved to exactly one immutable UUID/);
   });
 
-  it('rejects KEY-shaped values in authorization ID fields', () => {
-    expect(() => assertLinearAuthorizationId(issueKey, 'linear.issueId')).toThrow(
-      /immutable Linear issue UUID is required/,
-    );
+  it('accepts KEY-shaped values as Linear MCP identities while rejecting garbage', () => {
+    expect(() => assertLinearAuthorizationId(issueKey, 'linear.issueId')).not.toThrow();
     expect(() => assertLinearAuthorizationId(issueUuid, 'linear.issueId')).not.toThrow();
+    expect(() => assertLinearAuthorizationId('not-an-identity', 'linear.issueId')).toThrow(
+      /UUID or verified issue key is required/,
+    );
 
     const swapped = resolveLinearIssueIdentity({
       externalId: issueKey,
@@ -368,7 +377,7 @@ describe('Linear live UUID identity persistence', () => {
     ]);
   });
 
-  it('still rejects KEY-only authorization through planning with AUR-PLAN-010', async () => {
+  it('still rejects KEY-only authorization without discovery with AUR-PLAN-010', async () => {
     const { workspace, store, output } = await serviceFixture();
     const mock = new MockAgentAdapter();
     const services = new AurousServices({
