@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const AgentNameSchema = z.enum(['codex', 'claude', 'mock']);
 export type AgentName = z.infer<typeof AgentNameSchema>;
 
-export const ToolNameSchema = z.enum(['notion', 'linear', 'mock']);
+export const ToolNameSchema = z.enum(['notion', 'linear', 'airtable', 'mock']);
 export type ToolName = z.infer<typeof ToolNameSchema>;
 
 export const SeveritySchema = z.enum(['warning', 'recoverable', 'fatal']);

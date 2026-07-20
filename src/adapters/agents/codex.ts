@@ -57,6 +57,7 @@ export class CodexAgentAdapter implements AgentAdapter {
         mcp: {
           notion: { status: 'unknown', detail: 'Codex is unavailable.' },
           linear: { status: 'unknown', detail: 'Codex is unavailable.' },
+          airtable: { status: 'unknown', detail: 'Codex is unavailable.' },
         },
         warnings: ['Install Codex CLI before selecting --agent codex.'],
       };
@@ -84,6 +85,7 @@ export class CodexAgentAdapter implements AgentAdapter {
       mcp: {
         notion: mcpReadiness(mcp.exitCode ?? -1, mcpOutput, 'notion'),
         linear: mcpReadiness(mcp.exitCode ?? -1, mcpOutput, 'linear'),
+        airtable: mcpReadiness(mcp.exitCode ?? -1, mcpOutput, 'airtable'),
       },
       warnings: supportsNonInteractive
         ? []
@@ -192,7 +194,7 @@ export class CodexAgentAdapter implements AgentAdapter {
     runDirectory: string,
     phase: AgentPhase,
     prompt: string,
-    tool: 'notion' | 'linear' | 'mock',
+    tool: 'notion' | 'linear' | 'airtable' | 'mock',
     runId: string,
   ): Promise<void> {
     const diagnostic = await this.requireReady(runDirectory, phase, prompt);
@@ -201,9 +203,9 @@ export class CodexAgentAdapter implements AgentAdapter {
       if (phase === 'destination-discover') {
         throw new AurousError({
           code: 'AUR-DEST-008',
-          summary: `${tool === 'notion' ? 'Notion' : 'Linear'} is not connected to Codex yet.`,
+          summary: `${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : 'Airtable'} is not connected to Codex yet.`,
           probableCause: 'The selected local agent cannot access this integration.',
-          nextAction: `Connect ${tool === 'notion' ? 'Notion' : 'Linear'} in Codex, then repeat the request.`,
+          nextAction: `Connect ${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : 'Airtable'} in Codex, then repeat the request.`,
           severity: 'recoverable',
           runId,
         });
@@ -402,7 +404,7 @@ export function buildCodexInvocationArgs(
   phase: AgentPhase,
   schemaPath: string,
   outputPath: string,
-  executionTool?: 'notion' | 'linear' | 'mock',
+  executionTool?: 'notion' | 'linear' | 'airtable' | 'mock',
   model?: string,
 ): string[] {
   const args = ['exec', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only'];
@@ -430,7 +432,7 @@ function executionTool(
     | PlanExecutionInput
     | RecoveryInspectionInput
     | RecoveryActionExecutionInput,
-): 'notion' | 'linear' | 'mock' | undefined {
+): 'notion' | 'linear' | 'airtable' | 'mock' | undefined {
   if ('plan' in input) return input.plan.tool;
   if ('discoveryId' in input) return input.productivity.name;
   if ('recoveryPlan' in input) return input.recoveryPlan.tool;
@@ -486,7 +488,7 @@ const requiredCodexFlags = [
 function mcpReadiness(
   exitCode: number,
   output: string,
-  name: 'notion' | 'linear',
+  name: 'notion' | 'linear' | 'airtable',
 ): AgentDiagnostic['mcp']['notion'] {
   if (exitCode !== 0)
     return { status: 'unknown', detail: 'Could not inspect Codex MCP configuration.' };

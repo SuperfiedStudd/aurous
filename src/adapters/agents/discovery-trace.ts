@@ -98,7 +98,13 @@ function isMcpItem(item: Record<string, unknown>, integration: ToolName): boolea
 
 function discoveryPurpose(integration: ToolName, operation: string): string {
   const display =
-    integration === 'notion' ? 'Notion' : integration === 'linear' ? 'Linear' : 'Mock';
+    integration === 'notion'
+      ? 'Notion'
+      : integration === 'linear'
+        ? 'Linear'
+        : integration === 'airtable'
+          ? 'Airtable'
+          : 'Mock';
   if (/search|query/i.test(operation))
     return `Find accessible ${display} destinations and exact project-object matches.`;
   if (/fetch|get|retrieve|inspect/i.test(operation))

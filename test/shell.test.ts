@@ -248,7 +248,9 @@ describe('dynamic interactive Aurous shell', () => {
 
     const rendered = terminal.rendered();
     expect(rendered).toContain('! Invalid agent selection. Choose codex, claude, or mock.');
-    expect(rendered).toContain('! Invalid target selection. Choose notion, linear, or mock.');
+    expect(rendered).toContain(
+      '! Invalid target selection. Choose notion, linear, airtable, or mock.',
+    );
     expect(rendered).toContain('! Invalid apply selection. Create a plan first');
     expect(rendered).not.toContain('Fatal internal error');
     expect(rendered).not.toContain('Probable cause:');

@@ -262,5 +262,6 @@ function agentDisplayName(agent: AgentName): string {
 function toolDisplayName(tool: ToolName): string {
   if (tool === 'notion') return 'Notion';
   if (tool === 'linear') return 'Linear';
+  if (tool === 'airtable') return 'Airtable';
   return 'Mock';
 }

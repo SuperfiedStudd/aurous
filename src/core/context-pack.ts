@@ -381,6 +381,18 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
           `  - URL: ${destination.url ?? 'Not returned'}`,
           `  - Resolution: ${destination.source} — ${destination.sourceDetail}`,
           `  - Verified: ${destination.verifiedAt}`,
+          ...destination.existingObjects
+            .slice(0, 30)
+            .sort(
+              (a, b) =>
+                a.type.localeCompare(b.type) ||
+                a.name.localeCompare(b.name) ||
+                a.id.localeCompare(b.id),
+            )
+            .map(
+              (object) =>
+                `  - Inspected ${object.type}: ${object.name} (${object.id})${object.url ? ` · ${object.url}` : ''}`,
+            ),
         ])),
     '',
     '## Workspace preferences',

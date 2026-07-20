@@ -23,6 +23,7 @@ export class MockAgentAdapter implements AgentAdapter {
       mcp: {
         notion: { status: 'ready', detail: 'Simulated by mock adapter.' },
         linear: { status: 'ready', detail: 'Simulated by mock adapter.' },
+        airtable: { status: 'ready', detail: 'Simulated by mock adapter.' },
       },
       warnings: [],
     });
@@ -61,14 +62,23 @@ export class MockAgentAdapter implements AgentAdapter {
               url: null,
               existingAurousMatch: false,
             }
-          : {
-              id: 'mock-workspace-id',
-              name: 'Local workspace',
-              kind: 'workspace',
-              description: 'Local deterministic workspace',
-              url: null,
-              existingAurousMatch: false,
-            };
+          : input.productivity.name === 'airtable'
+            ? {
+                id: 'mock-airtable-workspace-id',
+                name: 'Build Week workspace',
+                kind: 'workspace',
+                description: 'Writable Airtable workspace',
+                url: null,
+                existingAurousMatch: false,
+              }
+            : {
+                id: 'mock-workspace-id',
+                name: 'Local workspace',
+                kind: 'workspace',
+                description: 'Local deterministic workspace',
+                url: null,
+                existingAurousMatch: false,
+              };
     const value = {
       integration: input.productivity.name,
       candidates: [candidate],
@@ -213,7 +223,10 @@ export class MockAgentAdapter implements AgentAdapter {
   }
 }
 
-function createMockProposal(tool: 'notion' | 'linear' | 'mock', objective: string): PlanProposal {
+function createMockProposal(
+  tool: 'notion' | 'linear' | 'airtable' | 'mock',
+  objective: string,
+): PlanProposal {
   if (tool === 'linear') return linearProposal(objective);
   if (tool === 'notion') return notionProposal(objective);
   const action: PlanAction = {

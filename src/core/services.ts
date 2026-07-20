@@ -178,13 +178,14 @@ export class AurousServices {
         `${agent.name}: ${agent.installed ? 'installed' : 'missing'}, noninteractive=${agent.supportsNonInteractive ? 'ready' : 'not-ready'}, auth=${agent.authentication.status}`,
       );
       this.dependencies.output.log(
-        `  MCP notion=${agent.mcp.notion.status}, linear=${agent.mcp.linear.status}`,
+        `  MCP notion=${agent.mcp.notion.status}, linear=${agent.mcp.linear.status}, airtable=${agent.mcp.airtable.status}`,
       );
       if (verbose) {
         if (agent.version) this.dependencies.output.log(`  Version: ${agent.version}`);
         this.dependencies.output.log(`  Auth: ${agent.authentication.detail}`);
         this.dependencies.output.log(`  Notion: ${agent.mcp.notion.detail}`);
         this.dependencies.output.log(`  Linear: ${agent.mcp.linear.detail}`);
+        this.dependencies.output.log(`  Airtable: ${agent.mcp.airtable.detail}`);
         for (const warning of agent.warnings) this.dependencies.output.log(`  Warning: ${warning}`);
       }
     }
@@ -752,6 +753,7 @@ export class AurousServices {
       );
       validateExecutionScope(plan, result);
       await this.dependencies.store.saveResult(runId, result);
+      await this.persistExactExecutionObjects(plan, result);
       await this.dependencies.store.updateStatus(runId, result.status);
       await this.event(
         runId,
@@ -814,6 +816,50 @@ export class AurousServices {
       });
       throw classified;
     }
+  }
+
+  private async persistExactExecutionObjects(
+    plan: AurousPlan,
+    result: ExecutionResult,
+  ): Promise<void> {
+    if (plan.tool === 'mock') return;
+    const projectRoot = await detectProjectRoot(this.dependencies.workspace);
+    const contextStore = new ContextPackStore(projectRoot);
+    const pack = await contextStore.loadOrCreate();
+    const saved = destinationFor(pack, plan.tool);
+    if (!saved) return;
+    const exactResults = [...result.createdObjects, ...(result.skippedActions ?? [])].filter(
+      (object) => Boolean(object.externalId),
+    );
+    if (exactResults.length === 0) return;
+    const existing = new Map(saved.existingObjects.map((object) => [object.id, object]));
+    const resultIdByAction = new Map(
+      exactResults.flatMap((object) =>
+        object.externalId ? [[object.actionId, object.externalId]] : [],
+      ),
+    );
+    for (const object of exactResults) {
+      const action = plan.plannedActions.find((candidate) => candidate.id === object.actionId);
+      if (!action || !object.externalId) continue;
+      existing.set(object.externalId, {
+        id: object.externalId,
+        name: object.name,
+        type: object.type || action.objectType,
+        destinationId: saved.id,
+        ...(plan.tool === 'airtable'
+          ? { parentId: airtableParentId(action, resultIdByAction) }
+          : {}),
+        ...(object.url ? { url: object.url } : {}),
+      });
+    }
+    await contextStore.saveDestination({
+      ...saved,
+      verifiedAt: this.now().toISOString(),
+      existingObjects: [...existing.values()].sort(
+        (a, b) =>
+          a.type.localeCompare(b.type) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+      ),
+    });
   }
 
   async recover(originalRunId: string, options: RecoverOptions = {}): Promise<RecoveryPlan> {
@@ -1490,6 +1536,18 @@ export class AurousServices {
   }
 }
 
+function airtableParentId(
+  action: AurousPlan['plannedActions'][number],
+  resultIdByAction: Map<string, string>,
+): string | undefined {
+  const property = (key: string) => action.properties.find((entry) => entry.key === key)?.value;
+  if (action.objectType.toLocaleLowerCase() === 'base') return undefined;
+  const exact = property('airtable.tableId') ?? property('airtable.baseId');
+  if (exact) return exact;
+  const actionRef = property('airtable.tableActionId') ?? property('airtable.baseActionId');
+  return actionRef ? resultIdByAction.get(actionRef) : undefined;
+}
+
 function progressWordFor(phase: string): ProgressWord {
   if (phase.includes('apply') || phase.includes('action')) return 'Forging';
   if (phase.includes('plan') || phase.includes('inspection') || phase.includes('verification'))
@@ -1626,7 +1684,14 @@ function validateExactObjectAuthorizations(
   tool: ToolName,
   destination: ResolvedDestination,
 ): void {
-  const namespace = tool === 'linear' ? 'linear' : tool === 'notion' ? 'notion' : 'mock';
+  const namespace =
+    tool === 'linear'
+      ? 'linear'
+      : tool === 'notion'
+        ? 'notion'
+        : tool === 'airtable'
+          ? 'airtable'
+          : 'mock';
   const exactKey = `${namespace}.dedupe.knownExternalId`;
   const inspectedById = new Map(destination.existingObjects.map((object) => [object.id, object]));
   for (const action of proposal.plannedActions) {
@@ -1662,6 +1727,59 @@ function validateExactObjectAuthorizations(
       }
     }
     if (tool === 'linear') validateLinearRelationshipIds(action, destination);
+    if (tool === 'airtable')
+      validateAirtableReferences(action, proposal.plannedActions, destination);
+  }
+}
+
+function validateAirtableReferences(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+  actions: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'],
+  destination: ResolvedDestination,
+): void {
+  const expected = new Map([
+    ['airtable.baseId', 'base'],
+    ['airtable.tableId', 'table'],
+    ['airtable.fieldId', 'field'],
+    ['airtable.recordId', 'record'],
+  ]);
+  for (const [key, type] of expected) {
+    const value = action.properties.find((property) => property.key === key)?.value;
+    if (!value) continue;
+    const exact = destination.existingObjects.find((object) => object.id === value);
+    if (!exact || !exactObjectTypeMatches('airtable', exact.type, type)) {
+      throw new AurousError({
+        code: 'AUR-PLAN-011',
+        summary: `Airtable action ${action.id} references an uninspected ${type} ID.`,
+        probableCause: `The immutable ${key} value was not returned by read-only discovery.`,
+        nextAction:
+          'Re-run Airtable discovery. New dependent objects must reference an approved create action ID instead.',
+      });
+    }
+  }
+  for (const [key, type] of [
+    ['airtable.baseActionId', 'base'],
+    ['airtable.tableActionId', 'table'],
+    ['airtable.fieldActionId', 'field'],
+  ] as const) {
+    const value = action.properties.find((property) => property.key === key)?.value;
+    if (!value) continue;
+    const dependency = actions.find((candidate) => candidate.id === value);
+    if (
+      !dependency ||
+      dependency.operation !== 'create' ||
+      !exactObjectTypeMatches('airtable', dependency.objectType, type) ||
+      !action.dependsOn.includes(value)
+    ) {
+      throw new AurousError({
+        code: 'AUR-PLAN-012',
+        summary: `Airtable action ${action.id} has an invalid ${key} dependency.`,
+        probableCause:
+          'A dependent object did not reference an immutable approved create action of the required type.',
+        nextAction:
+          'Regenerate the plan with explicit create-action dependencies and no placeholder IDs.',
+      });
+    }
   }
 }
 
@@ -1798,6 +1916,7 @@ function destinationCancelled(): AurousError {
 function integrationDisplayName(tool: ToolName): string {
   if (tool === 'notion') return 'Notion';
   if (tool === 'linear') return 'Linear';
+  if (tool === 'airtable') return 'Airtable';
   return 'Mock';
 }
 

@@ -3,7 +3,7 @@ export const destinationDiscoveryJsonSchema = {
   additionalProperties: false,
   required: ['integration', 'candidates', 'existingObjects', 'inspectedAt', 'warnings'],
   properties: {
-    integration: { type: 'string', enum: ['notion', 'linear', 'mock'] },
+    integration: { type: 'string', enum: ['notion', 'linear', 'airtable', 'mock'] },
     candidates: {
       type: 'array',
       items: {

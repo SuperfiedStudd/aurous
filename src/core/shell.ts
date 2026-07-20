@@ -245,7 +245,8 @@ export class AurousShell {
       return;
     }
     const parsed = ToolNameSchema.safeParse(args[0]?.toLowerCase());
-    if (!parsed.success) throw shellInputError('target', 'Choose notion, linear, or mock.');
+    if (!parsed.success)
+      throw shellInputError('target', 'Choose notion, linear, airtable, or mock.');
     state.target = parsed.data;
     delete state.destinationName;
     delete state.linearTeam;
@@ -307,7 +308,8 @@ export class AurousShell {
     }
     if (subcommand === 'forget') {
       const parsed = ToolNameSchema.safeParse(args[1]?.toLowerCase());
-      if (!parsed.success) throw shellInputError('context', 'Use /context forget notion|linear.');
+      if (!parsed.success)
+        throw shellInputError('context', 'Use /context forget notion|linear|airtable.');
       const store = this.contextStore();
       await store.forgetDestination(parsed.data);
       if (state.target === parsed.data) {
@@ -325,7 +327,7 @@ export class AurousShell {
       if (!parsed.success || !id || !name)
         throw shellInputError(
           'context',
-          'Advanced usage: /context override notion|linear <id-or-url> <friendly-name>.',
+          'Advanced usage: /context override notion|linear|airtable <id-or-url> <friendly-name>.',
         );
       state.destinationOverride = { integration: parsed.data, id, name };
       this.setReady(`Advanced ${displayTarget(parsed.data)} destination override staged.`);
@@ -881,6 +883,7 @@ function displayAgent(agent: AgentName): string {
 function displayTarget(target: ToolName): string {
   if (target === 'linear') return 'Linear';
   if (target === 'notion') return 'Notion';
+  if (target === 'airtable') return 'Airtable';
   return 'Mock';
 }
 
