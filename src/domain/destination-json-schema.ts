@@ -25,7 +25,16 @@ export const destinationDiscoveryJsonSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['id', 'name', 'type', 'destinationId', 'url', 'parentId'],
+        required: [
+          'id',
+          'name',
+          'type',
+          'destinationId',
+          'url',
+          'parentId',
+          'identifier',
+          'linkedIds',
+        ],
         properties: {
           id: { type: 'string' },
           name: { type: 'string' },
@@ -33,8 +42,9 @@ export const destinationDiscoveryJsonSchema = {
           destinationId: { type: 'string' },
           url: { type: ['string', 'null'] },
           parentId: { type: ['string', 'null'] },
-          identifier: { type: 'string' },
-          linkedIds: { type: 'array', items: { type: 'string' } },
+          // Optional application fields must still be required+nullable for Codex structured outputs.
+          identifier: { type: ['string', 'null'] },
+          linkedIds: { type: ['array', 'null'], items: { type: 'string' } },
         },
       },
     },

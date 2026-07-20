@@ -57,12 +57,13 @@ export function commandFailure(
     : timedOut
       ? `${agent} timed out during ${phase}.`
       : `${agent} exited unsuccessfully during ${phase}.`;
+  const eventDetail = extractAgentEventError(stdout);
   return new AurousCommandError({
     code: cancelled ? 'AUR-AGENT-007' : timedOut ? 'AUR-AGENT-003' : 'AUR-AGENT-004',
     summary,
     probableCause: cancelled
       ? 'The user or calling process requested cancellation.'
-      : redactText(stderr.trim()).slice(0, 500) ||
+      : redactText(stderr.trim() || eventDetail || '').slice(0, 500) ||
         'The local agent CLI returned a non-zero exit code.',
     nextAction: cancelled
       ? 'Review the run diagnostics, then create a new plan or retry apply when ready.'
@@ -78,6 +79,36 @@ export function commandFailure(
     stderr,
     durationMs,
   });
+}
+
+function extractAgentEventError(stdout: string): string {
+  const lines = stdout.split('\n').reverse();
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      if (typeof event.message === 'string' && event.message.trim()) {
+        try {
+          const nested = JSON.parse(event.message) as Record<string, unknown>;
+          const error = isRecord(nested.error) ? nested.error : nested;
+          if (typeof error.message === 'string' && error.message.trim())
+            return error.message.trim();
+        } catch {
+          return event.message.trim();
+        }
+      }
+      const error = isRecord(event.error) ? event.error : undefined;
+      if (error && typeof error.message === 'string' && error.message.trim())
+        return error.message.trim();
+    } catch {
+      // Ignore non-JSON stdout lines.
+    }
+  }
+  return '';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function structuredOutputFailure(
@@ -118,8 +149,4 @@ function invalidOutput(summary: string, cause?: unknown): AurousError {
       'Retry once. If it repeats, use the generated manual prompt and report the redacted diagnostic output.',
     cause,
   });
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }

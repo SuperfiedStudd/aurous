@@ -29,9 +29,9 @@ export const DiscoveredObjectSchema = z.object({
   url: z.string().url().nullish(),
   parentId: z.string().nullish(),
   /** Human-readable Linear issue key (e.g. JAS-17). Never authorizes mutation. */
-  identifier: z.string().min(1).optional(),
+  identifier: z.string().min(1).nullish(),
   /** Currently linked related object IDs when discovery inspected them. */
-  linkedIds: z.array(z.string().min(1)).optional(),
+  linkedIds: z.array(z.string().min(1)).nullish(),
 });
 export type DiscoveredObject = z.infer<typeof DiscoveredObjectSchema>;
 
