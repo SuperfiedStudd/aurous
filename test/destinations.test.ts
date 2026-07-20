@@ -147,6 +147,55 @@ describe('shared destination resolution', () => {
     );
   });
 
+  it('binds an inspected Notion database record returned by the MCP as a page', async () => {
+    const adapter = createProductivityAdapter('notion');
+    const resolved = await resolveDestination({
+      adapter,
+      discovery: discovery(
+        'notion',
+        [candidate('page-product', 'Aurous Product HQ', 'page', true)],
+        [
+          {
+            id: 'record-readme',
+            name: 'Complete the README',
+            type: 'page',
+            destinationId: 'page-product',
+            url: 'https://notion.so/record-readme',
+            parentId: 'data-source-tasks',
+          },
+        ],
+      ),
+      objective: 'Update the existing README task in Notion',
+      projectName: 'Aurous',
+    });
+    const recordProposal: PlanProposal = {
+      ...proposal,
+      proposedWorkspaceStructure: [
+        { kind: 'database-record', name: 'Complete the README', purpose: 'Track completion.' },
+      ],
+      plannedActions: [
+        {
+          ...proposal.plannedActions[0]!,
+          operation: 'update',
+          objectType: 'database-record',
+          target: 'Complete the README',
+          description: 'Reuse and update the inspected README task.',
+        },
+      ],
+    };
+
+    const bound = adapter.bindDestination(recordProposal, resolved!);
+
+    expect(bound.plannedActions[0]?.properties).toContainEqual({
+      key: 'notion.dedupe.knownExternalId',
+      value: 'record-readme',
+    });
+    expect(bound.plannedActions[0]?.properties).toContainEqual({
+      key: 'notion.dedupe.knownUrl',
+      value: 'https://notion.so/record-readme',
+    });
+  });
+
   it('automatically selects one Linear team and uses friendly selection for multiple teams', async () => {
     const adapter = createProductivityAdapter('linear');
     const one = await resolveDestination({

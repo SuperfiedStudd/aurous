@@ -55,7 +55,7 @@ function bindExactDestination(
   return {
     ...proposal,
     plannedActions: proposal.plannedActions.map((action) => {
-      const existing = canonicalExactObject(destination, action);
+      const existing = canonicalExactObject(destination, action, 'notion');
       const properties = action.properties.filter(
         (property) =>
           property.key !== propertyKey &&
@@ -85,7 +85,7 @@ function bindExactDestination(
     warnings: [
       ...new Set([
         ...proposal.warnings,
-        ...exactBindingWarnings(destination, proposal.plannedActions),
+        ...exactBindingWarnings(destination, proposal.plannedActions, 'notion'),
       ]),
     ],
   };

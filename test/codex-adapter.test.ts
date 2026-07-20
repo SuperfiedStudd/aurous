@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildCodexInvocationArgs } from '../src/adapters/agents/codex.js';
+import {
+  buildCodexInvocationArgs,
+  extractCodexJsonLastMessage,
+} from '../src/adapters/agents/codex.js';
+import { buildCodexDiscoveryTrace } from '../src/adapters/agents/discovery-trace.js';
 
 describe('Codex invocation permissions', () => {
   it.each(['plan', 'recover-inspect'] as const)(
@@ -66,4 +70,79 @@ describe('Codex invocation permissions', () => {
       expect(args).not.toContain('--ask-for-approval');
     },
   );
+
+  it('emits JSON events only for auditable destination discovery', () => {
+    const discovery = buildCodexInvocationArgs(
+      'destination-discover',
+      '/tmp/schema.json',
+      '/tmp/output.json',
+      'notion',
+    );
+    const plan = buildCodexInvocationArgs('plan', '/tmp/schema.json', '/tmp/output.json');
+
+    expect(discovery).toContain('--json');
+    expect(plan).not.toContain('--json');
+  });
+
+  it('reduces Codex MCP events to a sanitized discovery audit trace', () => {
+    const id = '3a2c0122-d292-8130-bde0-f68012dac01a';
+    const stdout = [
+      JSON.stringify({
+        timestamp: '2026-07-19T20:00:00.000Z',
+        type: 'item.started',
+        item: {
+          id: 'call-1',
+          type: 'mcp_tool_call',
+          server: 'notion',
+          tool: 'notion-search',
+        },
+      }),
+      JSON.stringify({
+        timestamp: '2026-07-19T20:00:01.000Z',
+        type: 'item.completed',
+        item: {
+          id: 'call-1',
+          type: 'mcp_tool_call',
+          server: 'notion',
+          tool: 'notion-search',
+          status: 'completed',
+          result: {
+            content: [{ text: JSON.stringify({ results: [{ id, token: 'ntn_secret-value' }] }) }],
+          },
+        },
+      }),
+    ].join('\n');
+
+    const trace = buildCodexDiscoveryTrace({
+      stdout,
+      discoveryId: 'discovery-20260719T200000Z-abc123',
+      integration: 'notion',
+      startedAt: '2026-07-19T20:00:00.000Z',
+      completedAt: '2026-07-19T20:00:01.000Z',
+    });
+
+    expect(trace).toMatchObject({ success: true, sanitized: true });
+    expect(trace.operations).toHaveLength(1);
+    expect(trace.operations[0]).toMatchObject({
+      operation: 'notion-search',
+      purpose: 'Find accessible Notion destinations and exact project-object matches.',
+      success: true,
+      returnedObjectIds: [id],
+    });
+    expect(JSON.stringify(trace)).not.toContain('ntn_secret-value');
+  });
+
+  it('recovers the structured final message from a Codex JSON event stream', () => {
+    const expected = JSON.stringify({ integration: 'notion', candidates: [] });
+    const stdout = [
+      JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }),
+      JSON.stringify({
+        type: 'item.completed',
+        item: { id: 'item-1', type: 'agent_message', text: expected },
+      }),
+      JSON.stringify({ type: 'turn.completed' }),
+    ].join('\n');
+
+    expect(extractCodexJsonLastMessage(stdout)).toBe(expected);
+  });
 });

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ToolNameSchema, type ToolName } from './schemas.js';
+import { AgentNameSchema, ToolNameSchema, type ToolName } from './schemas.js';
 
 export const DestinationSourceSchema = z.enum([
   'explicit-instruction',
@@ -39,6 +39,33 @@ export const DestinationDiscoverySchema = z.object({
   warnings: z.array(z.string()).default([]),
 });
 export type DestinationDiscovery = z.infer<typeof DestinationDiscoverySchema>;
+
+export const DiscoveryReadOperationSchema = z.object({
+  sequence: z.number().int().positive(),
+  server: z.string().min(1),
+  operation: z.string().min(1),
+  purpose: z.string().min(1),
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime(),
+  success: z.boolean(),
+  returnedObjectIds: z.array(z.string().min(1)),
+  errorCode: z.string().min(1).optional(),
+});
+export type DiscoveryReadOperation = z.infer<typeof DiscoveryReadOperationSchema>;
+
+export const SanitizedDiscoveryTraceSchema = z.object({
+  schemaVersion: z.literal(1),
+  discoveryId: z.string().min(1),
+  integration: ToolNameSchema,
+  agent: AgentNameSchema,
+  startedAt: z.string().datetime(),
+  completedAt: z.string().datetime(),
+  success: z.boolean(),
+  sanitized: z.literal(true),
+  operations: z.array(DiscoveryReadOperationSchema),
+  warnings: z.array(z.string()),
+});
+export type SanitizedDiscoveryTrace = z.infer<typeof SanitizedDiscoveryTraceSchema>;
 
 export const ResolvedDestinationSchema = z.object({
   integration: ToolNameSchema,

@@ -1,12 +1,15 @@
 import path from 'node:path';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import {
   createAgentAdapter,
   type AgentAdapter,
   type AgentDiagnostic,
 } from '../adapters/agents/index.js';
 import { createProductivityAdapter } from '../adapters/productivity/index.js';
-import { normalizedObjectType } from '../adapters/productivity/exact-bindings.js';
+import {
+  exactObjectTypeMatches,
+  normalizedObjectType,
+} from '../adapters/productivity/exact-bindings.js';
 import {
   AgentNameSchema,
   AurousPlanSchema,
@@ -53,7 +56,11 @@ import { redactValue } from './redact.js';
 import type { RunStore } from './run-store.js';
 import { ContextPackStore, detectProjectRoot, destinationFor } from './context-pack.js';
 import { resolveDestination, type DestinationChooser } from './destination-resolver.js';
-import { DestinationDiscoverySchema, type ResolvedDestination } from '../domain/destinations.js';
+import {
+  DestinationDiscoverySchema,
+  SanitizedDiscoveryTraceSchema,
+  type ResolvedDestination,
+} from '../domain/destinations.js';
 import { uncoveredRequirements, validateObjectiveIntent } from './intent.js';
 
 export interface ServiceDependencies {
@@ -585,6 +592,35 @@ export class AurousServices {
       ...invocation.value,
       inspectedAt: this.now().toISOString(),
     });
+    await writeFile(
+      path.join(runDirectory, 'destination-discover-agent-response.json'),
+      `${JSON.stringify(discovery)}\n`,
+      { encoding: 'utf8', mode: 0o600 },
+    );
+    const trace = invocation.discoveryTrace
+      ? SanitizedDiscoveryTraceSchema.parse(redactValue(invocation.discoveryTrace))
+      : undefined;
+    if (trace) {
+      await writeFile(
+        path.join(runDirectory, 'discovery-trace.json'),
+        `${JSON.stringify(trace, null, 2)}\n`,
+        { encoding: 'utf8', mode: 0o600 },
+      );
+    }
+    if (
+      input.adapter.name === 'codex' &&
+      input.productivity.name !== 'mock' &&
+      (!trace || trace.operations.length === 0)
+    ) {
+      throw new AurousError({
+        code: 'AUR-DEST-009',
+        summary: 'Codex destination discovery did not produce an auditable MCP read trace.',
+        probableCause:
+          'The agent event stream omitted official MCP operation evidence, so the discovered IDs cannot be audited safely.',
+        nextAction: 'No writes occurred. Update Codex and repeat destination discovery.',
+        runId: discoveryId,
+      });
+    }
     if (discovery.integration !== input.productivity.name) {
       throw new AurousError({
         code: 'AUR-DEST-006',
@@ -1609,7 +1645,7 @@ function validateExactObjectAuthorizations(
         !previouslyVerified &&
         (!inspected ||
           inspected.name !== action.target ||
-          normalizedObjectType(inspected.type) !== normalizedObjectType(action.objectType))
+          !exactObjectTypeMatches(tool, inspected.type, action.objectType))
       ) {
         throw new AurousError({
           code: 'AUR-PLAN-010',

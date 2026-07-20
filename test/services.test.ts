@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,7 +8,7 @@ import { MockAgentAdapter } from '../src/adapters/agents/mock.js';
 import type { Output } from '../src/core/output.js';
 import { LocalRunStore } from '../src/core/run-store.js';
 import { AurousServices } from '../src/core/services.js';
-import type { DestinationDiscovery } from '../src/domain/destinations.js';
+import type { DestinationDiscovery, SanitizedDiscoveryTrace } from '../src/domain/destinations.js';
 import type { PlanProposal } from '../src/domain/schemas.js';
 
 function captureOutput(): { output: Output; lines: string[] } {
@@ -411,6 +411,119 @@ describe('AurousServices mock flow', () => {
     ).rejects.toMatchObject({
       code: 'AUR-PLAN-009',
     });
+  });
+
+  it('accepts an exactly inspected Notion record, stamps discovery, and saves an audit trace', async () => {
+    const { workspace, store, capture } = await fixture();
+    const current = '2026-07-19T20:30:00.000Z';
+    const discovery: DestinationDiscovery = {
+      integration: 'notion',
+      candidates: [
+        {
+          id: 'page-product',
+          name: 'Aurous Product HQ',
+          kind: 'page',
+          description: 'Existing Product HQ',
+          existingAurousMatch: true,
+        },
+      ],
+      existingObjects: [
+        {
+          id: 'record-readme',
+          name: 'Complete the README',
+          type: 'page',
+          destinationId: 'page-product',
+          url: 'https://notion.so/record-readme',
+          parentId: 'data-source-tasks',
+        },
+      ],
+      inspectedAt: '2020-01-01T00:00:00.000Z',
+      warnings: [],
+    };
+    const proposal: PlanProposal = {
+      proposedWorkspaceStructure: [
+        { kind: 'database-record', name: 'Complete the README', purpose: 'Track completion.' },
+      ],
+      plannedActions: [
+        {
+          id: 'action-001',
+          operation: 'update',
+          objectType: 'database-record',
+          target: 'Complete the README',
+          description: 'Reuse and update the exact existing README task.',
+          properties: [],
+          dependsOn: [],
+        },
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'The existing README task is updated.',
+    };
+    const trace: SanitizedDiscoveryTrace = {
+      schemaVersion: 1,
+      discoveryId: 'discovery-20260719T203000Z-abc123',
+      integration: 'notion',
+      agent: 'codex',
+      startedAt: '2026-07-19T20:29:59.000Z',
+      completedAt: current,
+      success: true,
+      sanitized: true,
+      operations: [
+        {
+          sequence: 1,
+          server: 'notion',
+          operation: 'notion-fetch',
+          purpose: 'Inspect an exact Notion object and its identity or relationships.',
+          startedAt: '2026-07-19T20:29:59.000Z',
+          completedAt: current,
+          success: true,
+          returnedObjectIds: ['page-product', 'record-readme'],
+        },
+      ],
+      warnings: [],
+    };
+    const base = planningAgent(discovery, proposal);
+    const agent: AgentAdapter = {
+      ...base,
+      name: 'codex',
+      discoverDestinations: async () => ({
+        ...(await base.discoverDestinations!({} as never)),
+        discoveryTrace: trace,
+      }),
+    };
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => agent,
+      now: () => new Date(current),
+    });
+
+    const plan = await services.plan({
+      agent: 'codex',
+      tool: 'notion',
+      contextPaths: ['.'],
+      objective: 'Update the existing README task in Notion',
+    });
+
+    expect(plan.plannedActions[0]?.properties).toContainEqual({
+      key: 'notion.dedupe.knownExternalId',
+      value: 'record-readme',
+    });
+    const discoveryRoot = path.join(workspace, '.aurous', 'discovery');
+    const [directory] = await readdir(discoveryRoot);
+    const normalized = JSON.parse(
+      await readFile(
+        path.join(discoveryRoot, directory!, 'destination-discover-agent-response.json'),
+        'utf8',
+      ),
+    ) as DestinationDiscovery;
+    const savedTrace = JSON.parse(
+      await readFile(path.join(discoveryRoot, directory!, 'discovery-trace.json'), 'utf8'),
+    ) as SanitizedDiscoveryTrace;
+    expect(normalized.inspectedAt).toBe(current);
+    expect(savedTrace.operations[0]?.returnedObjectIds).toEqual(['page-product', 'record-readme']);
   });
 });
 

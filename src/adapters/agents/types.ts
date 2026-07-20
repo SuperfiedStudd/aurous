@@ -10,7 +10,11 @@ import type {
 import type { ProductivityAdapter } from '../productivity/types.js';
 import type { RecoveryInspection, RecoveryPlan } from '../../domain/recovery.js';
 import type { CreatedObject, PlanAction } from '../../domain/schemas.js';
-import type { DestinationDiscovery, ResolvedDestination } from '../../domain/destinations.js';
+import type {
+  DestinationDiscovery,
+  ResolvedDestination,
+  SanitizedDiscoveryTrace,
+} from '../../domain/destinations.js';
 
 export type Readiness = 'ready' | 'not-ready' | 'unknown';
 
@@ -31,6 +35,7 @@ export interface InvocationRecord<T> {
   stderr: string;
   durationMs: number;
   boundaryDiagnostics?: ExecutionBoundaryDiagnostic[];
+  discoveryTrace?: SanitizedDiscoveryTrace;
 }
 
 export interface PlanGenerationInput {

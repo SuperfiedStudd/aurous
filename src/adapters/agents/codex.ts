@@ -28,6 +28,7 @@ import {
   writeManualPrompt,
   type AgentPhase,
 } from './helpers.js';
+import { buildCodexDiscoveryTrace } from './discovery-trace.js';
 import type {
   AgentAdapter,
   AgentDiagnostic,
@@ -266,6 +267,7 @@ export class CodexAgentAdapter implements AgentAdapter {
       'model' in input ? input.model : undefined,
     );
     const started = Date.now();
+    const startedAt = new Date(started).toISOString();
     let result;
     try {
       result = await execa('codex', args, {
@@ -292,6 +294,7 @@ export class CodexAgentAdapter implements AgentAdapter {
       }
       throw error;
     }
+    const completedAt = new Date().toISOString();
     const durationMs = Date.now() - started;
     if (result.exitCode !== 0 || result.isCanceled) {
       throw commandFailure(
@@ -311,7 +314,9 @@ export class CodexAgentAdapter implements AgentAdapter {
     try {
       output = await readFile(outputPath, 'utf8');
     } catch {
-      if (result.stdout.trim()) output = result.stdout;
+      const eventMessage = extractCodexJsonLastMessage(result.stdout);
+      if (eventMessage) output = eventMessage;
+      else if (result.stdout.trim()) output = result.stdout;
       else {
         const likelyTimedOut = result.timedOut || durationMs >= input.timeoutMs - 1_000;
         throw commandFailure(
@@ -328,12 +333,25 @@ export class CodexAgentAdapter implements AgentAdapter {
       }
     }
     try {
+      const value = parse(parseJsonPayload(output));
+      const integration = executionTool(input);
       return {
-        value: parse(parseJsonPayload(output)),
+        value,
         command: ['codex', ...args],
         stdout: result.stdout,
         stderr: result.stderr,
         durationMs,
+        ...(phase === 'destination-discover' && integration && integration !== 'mock'
+          ? {
+              discoveryTrace: buildCodexDiscoveryTrace({
+                stdout: result.stdout,
+                discoveryId: invocationRunId(input),
+                integration,
+                startedAt,
+                completedAt,
+              }),
+            }
+          : {}),
       };
     } catch (error) {
       throw structuredOutputFailure(
@@ -350,6 +368,35 @@ export class CodexAgentAdapter implements AgentAdapter {
   }
 }
 
+export function extractCodexJsonLastMessage(stdout: string): string | undefined {
+  const lines = stdout.split('\n').reverse();
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try {
+      const event = JSON.parse(line) as Record<string, unknown>;
+      const item = isRecord(event.item) ? event.item : undefined;
+      if (item?.type !== 'agent_message') continue;
+      if (typeof item.text === 'string' && item.text.trim()) return item.text;
+      if (typeof item.message === 'string' && item.message.trim()) return item.message;
+      if (typeof item.content === 'string' && item.content.trim()) return item.content;
+      if (Array.isArray(item.content)) {
+        const text = item.content
+          .map((part) => (isRecord(part) && typeof part.text === 'string' ? part.text : ''))
+          .join('')
+          .trim();
+        if (text) return text;
+      }
+    } catch {
+      // Non-JSON stdout is handled by the caller's existing fallback.
+    }
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function buildCodexInvocationArgs(
   phase: AgentPhase,
   schemaPath: string,
@@ -358,6 +405,7 @@ export function buildCodexInvocationArgs(
   model?: string,
 ): string[] {
   const args = ['exec', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only'];
+  if (phase === 'destination-discover') args.push('--json');
   if (model) args.push('--model', model);
   if (
     (phase === 'apply' || phase === 'recover-apply') &&
@@ -428,6 +476,7 @@ const requiredCodexFlags = [
   '--output-schema',
   '--output-last-message',
   '--ephemeral',
+  '--json',
   '--skip-git-repo-check',
   '--sandbox',
   '--strict-config',
