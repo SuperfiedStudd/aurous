@@ -22,6 +22,7 @@ import {
   type ShellTerminal,
   type ShellViewState,
 } from './shell-renderer.js';
+import { formatAgentModelsHelp } from '../adapters/agents/model-catalog.js';
 
 export interface ShellDependencies {
   workspace: string;
@@ -551,6 +552,8 @@ export class AurousShell {
           '/plan · /apply                workflow control',
           '/runs · /status               local run state',
           '/clear · /exit                shell control',
+          '',
+          ...formatAgentModelsHelp(),
         ],
         this.terminal.renderOptions,
       ),

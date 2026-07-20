@@ -11,6 +11,7 @@ import { DynamicShellRenderer, type ShellTerminal } from './core/shell-renderer.
 import type { DestinationChoiceRequest } from './core/destination-resolver.js';
 import { findProjectRoot } from './core/context-pack.js';
 import { ContextPackStore, detectProjectRoot } from './core/context-pack.js';
+import { formatAgentModelsHelp } from './adapters/agents/model-catalog.js';
 
 export interface CliDependencies {
   cwd?: string;
@@ -85,9 +86,15 @@ export function createCli(dependencies: CliDependencies = {}): Command {
   program
     .command('doctor')
     .description('Check Node, local agent authentication, and MCP readiness.')
+    .option('--agent <agent>', 'limit checks to one agent: codex, claude, or mock')
+    .option('--repair', 'attempt safe local repairs (Codex models-cache backup)')
     .option('--verbose', 'show readiness details')
-    .action(async (options: { verbose?: boolean }) => {
-      await services.doctor(Boolean(options.verbose));
+    .action(async (options: { agent?: string; repair?: boolean; verbose?: boolean }) => {
+      await services.doctor({
+        verbose: Boolean(options.verbose),
+        repair: Boolean(options.repair),
+        ...(options.agent ? { agent: AgentNameSchema.parse(options.agent) } : {}),
+      });
     });
 
   const contextCommand = program
@@ -124,6 +131,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .description('Create and save a validated read-only workspace plan.')
     .option('--agent <agent>', 'agent: codex, claude, or mock')
     .option('--tool <tool>', 'productivity tool: notion, linear, airtable, trello, or mock')
+    .option('--model <model-or-alias>', 'exact model or alias forwarded to the selected agent')
     .requiredOption('--context <paths...>', 'one or more explicit context paths')
     .requiredOption('--prompt <objective>', 'desired productivity workspace outcome')
     .option('--timeout <seconds>', 'override agent timeout in seconds', parsePositiveNumber)
@@ -135,6 +143,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
       async (options: {
         agent?: string;
         tool?: string;
+        model?: string;
         context: string[];
         prompt: string;
         timeout?: number;
@@ -147,6 +156,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
         await services.plan({
           ...(options.agent ? { agent: options.agent } : {}),
           ...(options.tool ? { tool: options.tool } : {}),
+          ...(options.model ? { model: options.model } : {}),
           contextPaths: options.context,
           objective: options.prompt,
           ...(options.timeout ? { timeoutMs: options.timeout * 1_000 } : {}),
@@ -164,26 +174,31 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .command('apply <run-id>')
     .description('Preview and explicitly approve execution of a saved plan.')
     .option('--yes', 'explicitly confirm the preview for noninteractive use')
+    .option('--model <model-or-alias>', 'exact model or alias forwarded to the selected agent')
     .option('--verbose', 'show exact resolved destination IDs in the preview')
-    .action(async (runId: string, options: { yes?: boolean; verbose?: boolean }) => {
-      const controller = cancellationController();
-      await services.apply(runId, {
-        confirmed: Boolean(options.yes),
-        ...(!options.yes
-          ? {
-              confirm: () =>
-                confirm('Apply exactly this saved plan to the connected integration?', 'apply'),
-            }
-          : {}),
-        signal: controller.signal,
-        verbose: Boolean(options.verbose),
-      });
-    });
+    .action(
+      async (runId: string, options: { yes?: boolean; model?: string; verbose?: boolean }) => {
+        const controller = cancellationController();
+        await services.apply(runId, {
+          confirmed: Boolean(options.yes),
+          ...(options.model ? { model: options.model } : {}),
+          ...(!options.yes
+            ? {
+                confirm: () =>
+                  confirm('Apply exactly this saved plan to the connected integration?', 'apply'),
+              }
+            : {}),
+          signal: controller.signal,
+          verbose: Boolean(options.verbose),
+        });
+      },
+    );
 
   program
     .command('linear-demo')
     .description('Plan, preview, approve, and execute the polished Linear demo in one command.')
     .option('--agent <agent>', 'agent: codex, claude, or mock')
+    .option('--model <model-or-alias>', 'exact model or alias forwarded to the selected agent')
     .option('--team <name>', 'optional friendly team-name hint')
     .option('--destination-id <id>', 'advanced exact team override')
     .option('--destination-url <url>', 'advanced team URL override')
@@ -194,6 +209,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .action(
       async (options: {
         agent?: string;
+        model?: string;
         team?: string;
         context: string[];
         yes?: boolean;
@@ -205,6 +221,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
         const controller = cancellationController();
         const plan = await services.planLinearDemo({
           ...(options.agent ? { agent: options.agent } : {}),
+          ...(options.model ? { model: options.model } : {}),
           ...(options.team ? { team: options.team } : {}),
           contextPaths: options.context,
           chooseDestination: chooseDestinationInTerminal,
@@ -216,6 +233,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
         await services.apply(plan.runId, {
           confirmed: Boolean(options.yes),
           alreadyPreviewed: true,
+          ...(options.model ? { model: options.model } : {}),
           ...(!options.yes
             ? {
                 confirm: () =>
@@ -261,6 +279,11 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .action(async (runId: string, options: { verbose?: boolean }) =>
       services.diagnoseRun(runId, Boolean(options.verbose)),
     );
+
+  program.addHelpText('after', () => {
+    const lines = formatAgentModelsHelp();
+    return `\n${lines.join('\n')}\n`;
+  });
 
   return program;
 }

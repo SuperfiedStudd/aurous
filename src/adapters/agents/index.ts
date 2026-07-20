@@ -23,4 +23,17 @@ export function createAgentAdapter(name: AgentName): AgentAdapter {
   }
 }
 
-export type { AgentAdapter, AgentDiagnostic } from './types.js';
+export type { AgentAdapter, AgentDiagnostic, AgentDiagnoseOptions } from './types.js';
+export {
+  inspectCodexModelsCache,
+  repairCodexModelsCache,
+  runCodexPreflight,
+  isCodexModelsCacheSchemaError,
+  CODEX_MODEL_CACHE_REQUIRED_FIELDS,
+} from './codex-cache.js';
+export {
+  detectAgentModelCatalogs,
+  formatAgentModelsHelp,
+  detectCodexModelCatalog,
+  detectClaudeModelCatalog,
+} from './model-catalog.js';

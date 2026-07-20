@@ -48,6 +48,21 @@ describe('Codex invocation permissions', () => {
     expect(args).not.toContain('--strict-config');
   });
 
+  it('never substitutes a different model when --model is provided', () => {
+    const requested = 'gpt-5.6-terra';
+    const args = buildCodexInvocationArgs(
+      'destination-discover',
+      '/tmp/schema.json',
+      '/tmp/output.json',
+      'airtable',
+      requested,
+    );
+    const modelIndex = args.indexOf('--model');
+    expect(modelIndex).toBeGreaterThan(-1);
+    expect(args[modelIndex + 1]).toBe(requested);
+    expect(args.filter((part) => part === '--model')).toHaveLength(1);
+  });
+
   it.each(['notion', 'linear'] as const)(
     'pre-approves only the selected %s MCP for one approved recovery action',
     (tool) => {

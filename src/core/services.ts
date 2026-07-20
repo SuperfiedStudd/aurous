@@ -121,6 +121,12 @@ export interface ApplyRecoveryOptions {
   signal?: AbortSignal;
 }
 
+export interface DoctorOptions {
+  verbose?: boolean;
+  repair?: boolean;
+  agent?: AgentName;
+}
+
 export interface DoctorReport {
   node: { status: 'ready' | 'not-ready'; version: string; detail: string };
   state: { status: 'ready' | 'not-ready'; detail: string };
@@ -149,7 +155,10 @@ export class AurousServices {
     return saved;
   }
 
-  async doctor(verbose = false): Promise<DoctorReport> {
+  async doctor(verboseOrOptions: boolean | DoctorOptions = false): Promise<DoctorReport> {
+    const options: DoctorOptions =
+      typeof verboseOrOptions === 'boolean' ? { verbose: verboseOrOptions } : verboseOrOptions;
+    const verbose = Boolean(options.verbose);
     const major = Number(process.versions.node.split('.')[0]);
     let state: DoctorReport['state'];
     try {
@@ -158,8 +167,13 @@ export class AurousServices {
     } catch {
       state = { status: 'not-ready', detail: 'Run "aurous init" to create local state.' };
     }
+    const agentNames = (['codex', 'claude', 'mock'] as const).filter(
+      (name) => !options.agent || name === options.agent,
+    );
     const agents = await Promise.all(
-      (['codex', 'claude', 'mock'] as const).map((name) => this.agentFactory(name).diagnose()),
+      agentNames.map((name) =>
+        this.agentFactory(name).diagnose({ repair: Boolean(options.repair) }),
+      ),
     );
     const report: DoctorReport = {
       node: {
@@ -182,6 +196,9 @@ export class AurousServices {
       this.dependencies.output.log(
         `  MCP notion=${agent.mcp.notion.status}, linear=${agent.mcp.linear.status}, airtable=${agent.mcp.airtable.status}, trello=${agent.mcp.trello.status}`,
       );
+      if (agent.cacheRepair?.attempted) {
+        this.dependencies.output.log(`  Cache repair: ${agent.cacheRepair.detail}`);
+      }
       if (verbose) {
         if (agent.version) this.dependencies.output.log(`  Version: ${agent.version}`);
         this.dependencies.output.log(`  Auth: ${agent.authentication.detail}`);

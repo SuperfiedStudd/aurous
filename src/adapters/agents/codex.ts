@@ -29,6 +29,13 @@ import {
   type AgentPhase,
 } from './helpers.js';
 import { buildCodexDiscoveryTrace } from './discovery-trace.js';
+import {
+  codexCacheSchemaFailureError,
+  isCodexModelsCacheSchemaError,
+  runCodexPreflight,
+  writeCodexCacheRepairDiagnostic,
+  type CodexCacheRepairResult,
+} from './codex-cache.js';
 import type {
   AgentAdapter,
   AgentDiagnostic,
@@ -42,10 +49,14 @@ import type {
 
 export class CodexAgentAdapter implements AgentAdapter {
   readonly name = 'codex' as const;
+  private cacheRepairAttempted = false;
 
-  async diagnose(): Promise<AgentDiagnostic> {
-    const version = await execa('codex', ['--version'], { reject: false }).catch(() => undefined);
-    if (!version || version.exitCode !== 0) {
+  async diagnose(options: { repair?: boolean } = {}): Promise<AgentDiagnostic> {
+    const preflight = await runCodexPreflight({
+      repair: Boolean(options.repair),
+      runProbe: Boolean(options.repair),
+    });
+    if (!preflight.installed) {
       return {
         name: this.name,
         installed: false,
@@ -61,6 +72,7 @@ export class CodexAgentAdapter implements AgentAdapter {
           trello: { status: 'unknown', detail: 'Codex is unavailable.' },
         },
         warnings: ['Install Codex CLI before selecting --agent codex.'],
+        ...(preflight.repair ? { cacheRepair: sanitizeRepair(preflight.repair) } : {}),
       };
     }
     const [help, auth, mcp] = await Promise.all([
@@ -70,10 +82,26 @@ export class CodexAgentAdapter implements AgentAdapter {
     ]);
     const supportsNonInteractive = requiredCodexFlags.every((flag) => help.stdout.includes(flag));
     const mcpOutput = `${mcp.stdout}\n${mcp.stderr}`;
+    const warnings: string[] = [];
+    if (!supportsNonInteractive) {
+      warnings.push(
+        'Installed Codex does not advertise every noninteractive flag Aurous requires.',
+      );
+    }
+    if (!preflight.cache.valid) {
+      warnings.push(
+        preflight.cache.issue ??
+          'Codex models cache is schema-incompatible. Run "aurous doctor --agent codex --repair".',
+      );
+    }
+    if (preflight.repair?.repaired && preflight.repair.backupPath) {
+      warnings.push(`Repaired Codex models cache; backup at ${preflight.repair.backupPath}.`);
+      this.cacheRepairAttempted = true;
+    }
     return {
       name: this.name,
       installed: true,
-      version: version.stdout.trim() || version.stderr.trim(),
+      ...(preflight.version ? { version: preflight.version } : {}),
       supportsNonInteractive,
       authentication: {
         status: auth.exitCode === 0 ? 'ready' : 'not-ready',
@@ -89,9 +117,8 @@ export class CodexAgentAdapter implements AgentAdapter {
         airtable: mcpReadiness(mcp.exitCode ?? -1, mcpOutput, 'airtable'),
         trello: mcpReadiness(mcp.exitCode ?? -1, mcpOutput, 'trello'),
       },
-      warnings: supportsNonInteractive
-        ? []
-        : ['Installed Codex does not advertise every noninteractive flag Aurous requires.'],
+      warnings,
+      ...(preflight.repair ? { cacheRepair: sanitizeRepair(preflight.repair) } : {}),
     };
   }
 
@@ -227,6 +254,7 @@ export class CodexAgentAdapter implements AgentAdapter {
     phase: AgentPhase,
     prompt: string,
   ): Promise<AgentDiagnostic> {
+    await this.ensureModelsCacheReady(runDirectory);
     const diagnostic = await this.diagnose();
     if (
       !diagnostic.installed ||
@@ -244,6 +272,23 @@ export class CodexAgentAdapter implements AgentAdapter {
       });
     }
     return diagnostic;
+  }
+
+  private async ensureModelsCacheReady(runDirectory: string): Promise<void> {
+    const preflight = await runCodexPreflight({
+      repair: !this.cacheRepairAttempted,
+      runProbe: false,
+    });
+    if (preflight.repair?.attempted) {
+      this.cacheRepairAttempted = true;
+      await writeCodexCacheRepairDiagnostic(runDirectory, preflight.repair);
+    }
+    if (!preflight.cache.valid && !preflight.repair?.repaired) {
+      throw codexCacheSchemaFailureError({
+        detail: preflight.detail,
+        ...(preflight.repair?.backupPath ? { backupPath: preflight.repair.backupPath } : {}),
+      });
+    }
   }
 
   private async invoke<T>(
@@ -264,54 +309,66 @@ export class CodexAgentAdapter implements AgentAdapter {
       encoding: 'utf8',
       mode: 0o600,
     });
+    const requestedModel = 'model' in input ? input.model : undefined;
     const args = buildCodexInvocationArgs(
       phase,
       schemaPath,
       outputPath,
       executionTool(input),
-      'model' in input ? input.model : undefined,
+      requestedModel,
     );
     const started = Date.now();
     const startedAt = new Date(started).toISOString();
-    let result;
-    try {
-      result = await execa('codex', args, {
-        cwd: input.workspace,
-        input: prompt,
-        reject: false,
-        timeout: input.timeoutMs,
-        ...(input.signal ? { cancelSignal: input.signal } : {}),
-      });
-    } catch (error) {
-      const durationMs = Date.now() - started;
-      if (input.signal?.aborted) {
-        throw commandFailure(
-          'Codex',
-          phase,
-          ['codex', ...args],
-          '',
-          error instanceof Error ? error.message : String(error),
-          false,
-          true,
-          durationMs,
-          invocationRunId(input),
-        );
+    let result = await this.execCodex(args, input, prompt, phase);
+    if (
+      (result.exitCode !== 0 || result.isCanceled) &&
+      isCodexModelsCacheSchemaError(`${result.stdout}\n${result.stderr}`) &&
+      !this.cacheRepairAttempted
+    ) {
+      const repairPreflight = await runCodexPreflight({ repair: true, runProbe: false });
+      this.cacheRepairAttempted = true;
+      if (repairPreflight.repair) {
+        await writeCodexCacheRepairDiagnostic(input.runDirectory, repairPreflight.repair);
       }
-      throw error;
+      if (!repairPreflight.repair?.repaired && !repairPreflight.cache.valid) {
+        throw codexCacheSchemaFailureError({
+          detail: repairPreflight.detail,
+          ...(repairPreflight.repair?.backupPath
+            ? { backupPath: repairPreflight.repair.backupPath }
+            : {}),
+          runId: invocationRunId(input),
+          ...(requestedModel ? { requestedModel } : {}),
+        });
+      }
+      // Exactly one retry after a recognized cache-schema repair.
+      result = await this.execCodex(args, input, prompt, phase);
+      if (
+        (result.exitCode !== 0 || result.isCanceled) &&
+        isCodexModelsCacheSchemaError(`${result.stdout}\n${result.stderr}`)
+      ) {
+        throw codexCacheSchemaFailureError({
+          detail: redactText(`${result.stderr}\n${result.stdout}`.trim()).slice(0, 500),
+          ...(repairPreflight.repair?.backupPath
+            ? { backupPath: repairPreflight.repair.backupPath }
+            : {}),
+          runId: invocationRunId(input),
+          ...(requestedModel ? { requestedModel } : {}),
+        });
+      }
     }
     const completedAt = new Date().toISOString();
     const durationMs = Date.now() - started;
     if (result.exitCode !== 0 || result.isCanceled) {
-      throw commandFailure(
-        'Codex',
+      throw classifyCodexCommandFailure(
         phase,
-        ['codex', ...args],
+        args,
         result.stdout,
         result.stderr,
         result.timedOut,
         result.isCanceled,
         durationMs,
         invocationRunId(input),
+        requestedModel,
       );
     }
     const runId = invocationRunId(input);
@@ -324,16 +381,16 @@ export class CodexAgentAdapter implements AgentAdapter {
       else if (result.stdout.trim()) output = result.stdout;
       else {
         const likelyTimedOut = result.timedOut || durationMs >= input.timeoutMs - 1_000;
-        throw commandFailure(
-          'Codex',
+        throw classifyCodexCommandFailure(
           phase,
-          ['codex', ...args],
+          args,
           result.stdout,
           result.stderr,
           likelyTimedOut,
           result.isCanceled,
           durationMs,
           runId,
+          requestedModel,
         );
       }
     }
@@ -369,6 +426,44 @@ export class CodexAgentAdapter implements AgentAdapter {
         error,
         runId,
       );
+    }
+  }
+
+  private async execCodex(
+    args: string[],
+    input:
+      | PlanGenerationInput
+      | DestinationDiscoveryInput
+      | PlanExecutionInput
+      | RecoveryInspectionInput
+      | RecoveryActionExecutionInput,
+    prompt: string,
+    phase: AgentPhase,
+  ) {
+    const started = Date.now();
+    try {
+      return await execa('codex', args, {
+        cwd: input.workspace,
+        input: prompt,
+        reject: false,
+        timeout: input.timeoutMs,
+        ...(input.signal ? { cancelSignal: input.signal } : {}),
+      });
+    } catch (error) {
+      if (input.signal?.aborted) {
+        throw commandFailure(
+          'Codex',
+          phase,
+          ['codex', ...args],
+          '',
+          error instanceof Error ? error.message : String(error),
+          false,
+          true,
+          Date.now() - started,
+          invocationRunId(input),
+        );
+      }
+      throw error;
     }
   }
 }
@@ -501,4 +596,66 @@ function mcpReadiness(
   if (/disabled|failed|error/i.test(line))
     return { status: 'not-ready', detail: redactText(line.trim()) };
   return { status: 'ready', detail: redactText(line.trim()) };
+}
+
+function sanitizeRepair(
+  repair: CodexCacheRepairResult,
+): NonNullable<AgentDiagnostic['cacheRepair']> {
+  return {
+    repaired: repair.repaired,
+    attempted: repair.attempted,
+    ...(repair.backupPath ? { backupPath: repair.backupPath } : {}),
+    detail: repair.detail,
+  };
+}
+
+function classifyCodexCommandFailure(
+  phase: AgentPhase,
+  args: string[],
+  stdout: string,
+  stderr: string,
+  timedOut: boolean,
+  cancelled: boolean,
+  durationMs: number,
+  runId?: string,
+  requestedModel?: string,
+) {
+  const combined = `${stdout}\n${stderr}`;
+  if (!cancelled && !timedOut && isCodexModelsCacheSchemaError(combined)) {
+    return codexCacheSchemaFailureError({
+      detail: redactText(stderr.trim() || stdout.trim()).slice(0, 500),
+      ...(runId ? { runId } : {}),
+      ...(requestedModel ? { requestedModel } : {}),
+    });
+  }
+  if (
+    requestedModel &&
+    !cancelled &&
+    !timedOut &&
+    /unknown model|invalid model|model .* not (found|supported|available)|unrecognized model/i.test(
+      combined,
+    )
+  ) {
+    return new AurousError({
+      code: 'AUR-AGENT-004',
+      summary: `Codex rejected requested model ${JSON.stringify(requestedModel)}.`,
+      probableCause:
+        redactText(stderr.trim() || stdout.trim()).slice(0, 500) ||
+        'The local agent CLI rejected the exact model requested by Aurous.',
+      nextAction:
+        'Choose a locally advertised model from "aurous --help" / "/help", then retry with the same --model value. Aurous does not substitute models.',
+      ...(runId ? { runId } : {}),
+    });
+  }
+  return commandFailure(
+    'Codex',
+    phase,
+    ['codex', ...args],
+    stdout,
+    stderr,
+    timedOut,
+    cancelled,
+    durationMs,
+    runId,
+  );
 }

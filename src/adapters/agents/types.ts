@@ -19,6 +19,13 @@ import type { ContextPack } from '../../domain/destinations.js';
 
 export type Readiness = 'ready' | 'not-ready' | 'unknown';
 
+export interface AgentCacheRepairDiagnostic {
+  repaired: boolean;
+  attempted: boolean;
+  backupPath?: string;
+  detail: string;
+}
+
 export interface AgentDiagnostic {
   name: AgentName;
   installed: boolean;
@@ -27,6 +34,8 @@ export interface AgentDiagnostic {
   authentication: { status: Readiness; detail: string };
   mcp: Record<'notion' | 'linear' | 'airtable' | 'trello', { status: Readiness; detail: string }>;
   warnings: string[];
+  /** Sanitized Codex models-cache repair metadata; never includes raw cache contents. */
+  cacheRepair?: AgentCacheRepairDiagnostic;
 }
 
 export interface InvocationRecord<T> {
@@ -99,9 +108,14 @@ export interface RecoveryActionExecutionInput {
   signal?: AbortSignal;
 }
 
+export interface AgentDiagnoseOptions {
+  /** Attempt safe local repairs (Codex models-cache backup) when supported. */
+  repair?: boolean;
+}
+
 export interface AgentAdapter {
   readonly name: AgentName;
-  diagnose(): Promise<AgentDiagnostic>;
+  diagnose(options?: AgentDiagnoseOptions): Promise<AgentDiagnostic>;
   discoverDestinations?(
     input: DestinationDiscoveryInput,
   ): Promise<InvocationRecord<DestinationDiscovery>>;

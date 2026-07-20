@@ -166,6 +166,9 @@ describe('dynamic interactive Aurous shell', () => {
     const rendered = terminal.rendered();
     expect(rendered.match(/AUROUS · PRODUCTIVITY, RESOLVED\./g)).toHaveLength(2);
     expect(rendered).toContain('/agent · /model · /target');
+    expect(rendered).toContain('Agent models');
+    expect(rendered).toContain('Aurous: aurous plan --agent');
+    expect(rendered).toContain('Native: codex -m');
     expect(rendered).toContain('✓ Agent Codex · model auto');
     expect(rendered).toContain('✓ Model gpt-5.6');
     expect(rendered).toContain('✓ Target Linear');

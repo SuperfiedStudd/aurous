@@ -273,6 +273,26 @@ export class ClaudeAgentAdapter implements AgentAdapter {
     }
     const durationMs = Date.now() - started;
     if (result.exitCode !== 0 || result.isCanceled) {
+      const combined = `${result.stdout}\n${result.stderr}`;
+      if (
+        model &&
+        !result.isCanceled &&
+        !result.timedOut &&
+        /unknown model|invalid model|model .* not (found|supported|available)|unrecognized model/i.test(
+          combined,
+        )
+      ) {
+        throw new AurousError({
+          code: 'AUR-AGENT-004',
+          summary: `Claude Code rejected requested model ${JSON.stringify(model)}.`,
+          probableCause:
+            redactText(result.stderr.trim() || result.stdout.trim()).slice(0, 500) ||
+            'The local agent CLI rejected the exact model requested by Aurous.',
+          nextAction:
+            'Choose a locally advertised model from "aurous --help" / "/help", then retry with the same --model value. Aurous does not substitute models.',
+          runId: invocationRunId(input),
+        });
+      }
       throw commandFailure(
         'Claude Code',
         phase,
