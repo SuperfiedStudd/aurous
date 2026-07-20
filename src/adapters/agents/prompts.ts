@@ -96,7 +96,7 @@ ${JSON.stringify(contextPack, null, 2)}
 Approved context documents:
 ${documents || '(No selected text files; infer only from the objective and summary.)'}
 
-Return the proposedWorkspaceStructure, plannedActions, assumptions, warnings, destructiveActions, and expectedResult fields. Action IDs must be sequential action-001, action-002, and so on.`;
+Return the proposedWorkspaceStructure, plannedActions, assumptions, warnings, destructiveActions, and expectedResult fields. Action IDs must be sequential action-001, action-002, and so on. plannedActions must never be empty: when the objective is already fully satisfied by exact inspected IDs, emit explicit skip/no-op actions with knownExternalId and skipReason instead of an empty array.`;
 }
 
 export function buildExecutionPrompt(plan: AurousPlan, productivity: ProductivityAdapter): string {

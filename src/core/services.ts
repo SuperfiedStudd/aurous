@@ -16,6 +16,7 @@ import {
   looksLikeActionOutputPlaceholder,
   validateAirtableRelationBinding,
 } from '../adapters/productivity/airtable-relations.js';
+import { materializeAirtableCompletedNoOpProposal } from '../adapters/productivity/airtable-noop.js';
 import { validateLinearDiscoveryIssues } from '../adapters/productivity/linear.js';
 import {
   AgentNameSchema,
@@ -309,8 +310,12 @@ export class AurousServices {
         invocation.stdout,
         invocation.stderr,
       );
+      const proposalValue =
+        toolName === 'airtable'
+          ? materializeAirtableCompletedNoOpProposal(invocation.value, destination)
+          : invocation.value;
       const bound = PlanProposalSchema.parse(
-        productivity.bindDestination(PlanProposalSchema.parse(invocation.value), destination),
+        productivity.bindDestination(PlanProposalSchema.parse(proposalValue), destination),
       );
       const proposal = PlanProposalSchema.parse({
         ...bound,

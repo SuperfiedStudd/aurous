@@ -144,7 +144,7 @@ export class MockAgentAdapter implements AgentAdapter {
       const skipReason = action.properties.find(
         (property) =>
           property.key.endsWith('.dedupe.skipReason') &&
-          property.value === 'already-satisfied-relation',
+          (property.value === 'already-satisfied-relation' || property.value === 'already-exists'),
       );
       if (skipReason) {
         const externalId =
@@ -156,7 +156,10 @@ export class MockAgentAdapter implements AgentAdapter {
           actionId: action.id,
           type: action.objectType,
           name: action.target,
-          reason: 'Already-satisfied relation; no write required.',
+          reason:
+            skipReason.value === 'already-satisfied-relation'
+              ? 'Already-satisfied relation; no write required.'
+              : 'Already-existing object; no write required.',
           externalId,
           url: `https://mock.aurous.local/${input.plan.runId}/${action.id}`,
         });

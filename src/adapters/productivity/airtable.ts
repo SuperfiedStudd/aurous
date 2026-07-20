@@ -115,7 +115,9 @@ NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one 
   planningInstructions(objective: string): string {
     return `Design a small, useful Airtable workspace for this objective: ${objective}
 
-Use native Airtable base, table, field, record, and linked-record semantics. Keep the requested quantity and negative constraints binding. Do not add customary objects. When creating a new base, use one immutable base action with its required bootstrap tables and primary fields in airtable.base.initialTables, then explicit dependent actions for non-primary fields and records. Same-plan record links must use typed airtable.relation dependencies, never \${action.output} placeholders. Do not create anything while planning.`;
+Use native Airtable base, table, field, record, and linked-record semantics. Keep the requested quantity and negative constraints binding. Do not add customary objects. When creating a new base, use one immutable base action with its required bootstrap tables and primary fields in airtable.base.initialTables, then explicit dependent actions for non-primary fields and records. Same-plan record links must use typed airtable.relation dependencies, never \${action.output} placeholders.
+
+ALREADY-SATISFIED RERUNS: plannedActions must never be an empty array. When discovery already contains the exact requested records and relation by inspected IDs, emit explicit update/link skip actions with airtable.dedupe.knownExternalId and airtable.dedupe.skipReason set to already-exists or already-satisfied-relation. A complete no-op is represented by those skip actions, not by plannedActions:[]. Do not create anything while planning.`;
   }
 
   executionInstructions(plan: AurousPlan): string {
