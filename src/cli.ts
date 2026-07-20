@@ -71,7 +71,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .command('init')
     .description('Initialize local Aurous state (never stores credentials).')
     .option('--agent <agent>', 'default agent: codex, claude, or mock')
-    .option('--tool <tool>', 'default tool: notion, linear, airtable, or mock')
+    .option('--tool <tool>', 'default tool: notion, linear, airtable, trello, or mock')
     .option('--timeout <seconds>', 'agent timeout in seconds', parsePositiveNumber)
     .action(async (options: { agent?: string; tool?: string; timeout?: number }) => {
       const config = {
@@ -123,7 +123,7 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .command('plan')
     .description('Create and save a validated read-only workspace plan.')
     .option('--agent <agent>', 'agent: codex, claude, or mock')
-    .option('--tool <tool>', 'productivity tool: notion, linear, airtable, or mock')
+    .option('--tool <tool>', 'productivity tool: notion, linear, airtable, trello, or mock')
     .requiredOption('--context <paths...>', 'one or more explicit context paths')
     .requiredOption('--prompt <objective>', 'desired productivity workspace outcome')
     .option('--timeout <seconds>', 'override agent timeout in seconds', parsePositiveNumber)

@@ -178,7 +178,7 @@ export class AurousServices {
         `${agent.name}: ${agent.installed ? 'installed' : 'missing'}, noninteractive=${agent.supportsNonInteractive ? 'ready' : 'not-ready'}, auth=${agent.authentication.status}`,
       );
       this.dependencies.output.log(
-        `  MCP notion=${agent.mcp.notion.status}, linear=${agent.mcp.linear.status}, airtable=${agent.mcp.airtable.status}`,
+        `  MCP notion=${agent.mcp.notion.status}, linear=${agent.mcp.linear.status}, airtable=${agent.mcp.airtable.status}, trello=${agent.mcp.trello.status}`,
       );
       if (verbose) {
         if (agent.version) this.dependencies.output.log(`  Version: ${agent.version}`);
@@ -186,6 +186,7 @@ export class AurousServices {
         this.dependencies.output.log(`  Notion: ${agent.mcp.notion.detail}`);
         this.dependencies.output.log(`  Linear: ${agent.mcp.linear.detail}`);
         this.dependencies.output.log(`  Airtable: ${agent.mcp.airtable.detail}`);
+        this.dependencies.output.log(`  Trello: ${agent.mcp.trello.detail}`);
         for (const warning of agent.warnings) this.dependencies.output.log(`  Warning: ${warning}`);
       }
     }
@@ -848,7 +849,9 @@ export class AurousServices {
         destinationId: saved.id,
         ...(plan.tool === 'airtable'
           ? { parentId: airtableParentId(action, resultIdByAction) }
-          : {}),
+          : plan.tool === 'trello'
+            ? { parentId: trelloParentId(action, resultIdByAction, saved.id) }
+            : {}),
         ...(object.url ? { url: object.url } : {}),
       });
     }
@@ -1548,6 +1551,173 @@ function airtableParentId(
   return actionRef ? resultIdByAction.get(actionRef) : undefined;
 }
 
+function trelloParentId(
+  action: AurousPlan['plannedActions'][number],
+  resultIdByAction: Map<string, string>,
+  workspaceId: string,
+): string | undefined {
+  const property = (key: string) => action.properties.find((entry) => entry.key === key)?.value;
+  const kind = normalizedObjectType(action.objectType);
+  if (kind === 'board') return workspaceId;
+  if (kind === 'list') {
+    return (
+      property('trello.boardId') ??
+      (property('trello.boardActionId')
+        ? resultIdByAction.get(property('trello.boardActionId')!)
+        : undefined)
+    );
+  }
+  if (kind === 'card') {
+    return (
+      property('trello.listId') ??
+      (property('trello.listActionId')
+        ? resultIdByAction.get(property('trello.listActionId')!)
+        : undefined)
+    );
+  }
+  if (kind === 'checklist') {
+    return (
+      property('trello.cardId') ??
+      (property('trello.cardActionId')
+        ? resultIdByAction.get(property('trello.cardActionId')!)
+        : undefined)
+    );
+  }
+  if (kind === 'label') {
+    return (
+      property('trello.boardId') ??
+      (property('trello.boardActionId')
+        ? resultIdByAction.get(property('trello.boardActionId')!)
+        : undefined)
+    );
+  }
+  return undefined;
+}
+
+function validateTrelloReferences(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+  actions: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'],
+  destination: ResolvedDestination,
+): void {
+  const kind = normalizedObjectType(action.objectType);
+  if (kind === 'label' && action.operation === 'create') {
+    throw new AurousError({
+      code: 'AUR-PLAN-018',
+      summary: `Trello action ${action.id} cannot create a label.`,
+      probableCause: 'The official Trello MCP has no label-creation tool.',
+      nextAction:
+        'Attach an existing label with trello.labelId from discovery, or omit the label action.',
+    });
+  }
+  if (/archive|delete/i.test(action.operation) || /archive|delet/i.test(action.description)) {
+    throw new AurousError({
+      code: 'AUR-PLAN-019',
+      summary: `Trello action ${action.id} proposes unsupported archive or deletion work.`,
+      probableCause: 'Aurous Trello MVP never archives or deletes objects.',
+      nextAction: 'Regenerate the plan without archive or delete actions.',
+    });
+  }
+  for (const property of action.properties) {
+    if (/archive|delete/i.test(property.key) || /archive|delete/i.test(property.value)) {
+      throw new AurousError({
+        code: 'AUR-PLAN-019',
+        summary: `Trello action ${action.id} includes unsupported archive or deletion properties.`,
+        probableCause: 'Aurous Trello MVP never archives or deletes objects.',
+        nextAction: 'Regenerate the plan without archive or delete properties.',
+      });
+    }
+  }
+  if (kind === 'workspace' && action.operation === 'create') {
+    throw new AurousError({
+      code: 'AUR-PLAN-020',
+      summary: 'Trello plans must not create a workspace.',
+      probableCause: 'Aurous uses the authorized OAuth workspace only.',
+      nextAction: 'Operate inside the discovered workspace destination.',
+    });
+  }
+  const expected = new Map([
+    ['trello.boardId', 'board'],
+    ['trello.listId', 'list'],
+    ['trello.cardId', 'card'],
+    ['trello.checklistId', 'checklist'],
+    ['trello.labelId', 'label'],
+  ]);
+  for (const [key, type] of expected) {
+    const value = action.properties.find((property) => property.key === key)?.value;
+    if (!value) continue;
+    const exact = destination.existingObjects.find((object) => object.id === value);
+    if (!exact || !exactObjectTypeMatches('trello', exact.type, type)) {
+      throw new AurousError({
+        code: 'AUR-PLAN-011',
+        summary: `Trello action ${action.id} references an uninspected ${type} ID.`,
+        probableCause: `The immutable ${key} value was not returned by read-only discovery.`,
+        nextAction:
+          'Re-run Trello discovery. New dependent objects must reference an approved create action ID instead.',
+      });
+    }
+  }
+  for (const [key, type] of [
+    ['trello.boardActionId', 'board'],
+    ['trello.listActionId', 'list'],
+    ['trello.cardActionId', 'card'],
+  ] as const) {
+    const value = action.properties.find((property) => property.key === key)?.value;
+    if (!value) continue;
+    const dependency = actions.find((candidate) => candidate.id === value);
+    if (
+      !dependency ||
+      dependency.operation !== 'create' ||
+      !exactObjectTypeMatches('trello', dependency.objectType, type) ||
+      !dependsOnAction(action, value, actions)
+    ) {
+      throw new AurousError({
+        code: 'AUR-PLAN-012',
+        summary: `Trello action ${action.id} has an invalid ${key} dependency.`,
+        probableCause:
+          'A dependent object did not reference an immutable approved create action of the required type.',
+        nextAction:
+          'Regenerate the plan with explicit create-action dependencies and no placeholder IDs.',
+      });
+    }
+  }
+  if (kind === 'list' && action.operation === 'create') {
+    const boardId = propertyValue(action, 'trello.boardId');
+    const boardActionId = propertyValue(action, 'trello.boardActionId');
+    if (!boardId && !boardActionId) {
+      throw new AurousError({
+        code: 'AUR-PLAN-021',
+        summary: `Trello list ${JSON.stringify(action.target)} is missing an exact board parent.`,
+        probableCause: 'List creation requires trello.boardId or trello.boardActionId.',
+        nextAction: 'Bind the list to an inspected board or an approved board create action.',
+      });
+    }
+  }
+  if (kind === 'card' && (action.operation === 'create' || action.operation === 'update')) {
+    const listId = propertyValue(action, 'trello.listId');
+    const listActionId = propertyValue(action, 'trello.listActionId');
+    if (!listId && !listActionId && action.operation === 'create') {
+      throw new AurousError({
+        code: 'AUR-PLAN-022',
+        summary: `Trello card ${JSON.stringify(action.target)} is missing an exact list parent.`,
+        probableCause: 'Card creation requires trello.listId or trello.listActionId.',
+        nextAction: 'Bind the card to an inspected list or an approved list create action.',
+      });
+    }
+  }
+  if (kind === 'checklist' && action.operation === 'create') {
+    const cardId = propertyValue(action, 'trello.cardId');
+    const cardActionId = propertyValue(action, 'trello.cardActionId');
+    if (!cardId && !cardActionId) {
+      throw new AurousError({
+        code: 'AUR-PLAN-023',
+        summary: `Trello checklist ${JSON.stringify(action.target)} is missing an exact card parent.`,
+        probableCause: 'Checklist creation requires trello.cardId or trello.cardActionId.',
+        nextAction: 'Bind the checklist to an inspected card or an approved card create action.',
+      });
+    }
+  }
+}
+
 function progressWordFor(phase: string): ProgressWord {
   if (phase.includes('apply') || phase.includes('action')) return 'Forging';
   if (phase.includes('plan') || phase.includes('inspection') || phase.includes('verification'))
@@ -1691,7 +1861,9 @@ function validateExactObjectAuthorizations(
         ? 'notion'
         : tool === 'airtable'
           ? 'airtable'
-          : 'mock';
+          : tool === 'trello'
+            ? 'trello'
+            : 'mock';
   const exactKey = `${namespace}.dedupe.knownExternalId`;
   const inspectedById = new Map(destination.existingObjects.map((object) => [object.id, object]));
   for (const action of proposal.plannedActions) {
@@ -1729,6 +1901,7 @@ function validateExactObjectAuthorizations(
     if (tool === 'linear') validateLinearRelationshipIds(action, destination);
     if (tool === 'airtable')
       validateAirtableReferences(action, proposal.plannedActions, destination);
+    if (tool === 'trello') validateTrelloReferences(action, proposal.plannedActions, destination);
   }
 }
 
@@ -2025,6 +2198,7 @@ function integrationDisplayName(tool: ToolName): string {
   if (tool === 'notion') return 'Notion';
   if (tool === 'linear') return 'Linear';
   if (tool === 'airtable') return 'Airtable';
+  if (tool === 'trello') return 'Trello';
   return 'Mock';
 }
 

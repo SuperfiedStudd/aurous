@@ -5,13 +5,15 @@ export function exactObjectMatches(
   destination: ResolvedDestination,
   action: Pick<PlanAction, 'objectType' | 'target'>,
   tool: ToolName = destination.integration,
+  parentId?: string,
 ) {
   return destination.existingObjects
-    .filter(
-      (object) =>
-        object.name === action.target &&
-        exactObjectTypeMatches(tool, object.type, action.objectType),
-    )
+    .filter((object) => {
+      if (object.name !== action.target) return false;
+      if (!exactObjectTypeMatches(tool, object.type, action.objectType)) return false;
+      if (parentId === undefined) return true;
+      return (object.parentId ?? destination.id) === parentId;
+    })
     .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
 }
 
@@ -19,8 +21,9 @@ export function canonicalExactObject(
   destination: ResolvedDestination,
   action: Pick<PlanAction, 'objectType' | 'target'>,
   tool: ToolName = destination.integration,
+  parentId?: string,
 ) {
-  return exactObjectMatches(destination, action, tool)[0];
+  return exactObjectMatches(destination, action, tool, parentId)[0];
 }
 
 export function exactBindingWarnings(
@@ -32,6 +35,8 @@ export function exactBindingWarnings(
   for (const action of actions) {
     const matches = exactObjectMatches(destination, action, tool);
     if (matches.length > 1) {
+      const parentKeys = new Set(matches.map((object) => object.parentId ?? destination.id));
+      if (parentKeys.size > 1) continue;
       warnings.push(
         `Duplicate risk for ${action.objectType} ${JSON.stringify(action.target)}: ${matches.length} compatible exact objects were inspected. Aurous selected one canonical exact object; the other ${matches.length - 1} ${matches.length === 2 ? 'duplicate' : 'duplicates'} will remain untouched.`,
       );
@@ -61,10 +66,16 @@ export function normalizedObjectType(type: string): string {
     .trim()
     .toLocaleLowerCase()
     .replace(/[\s-]+/g, '_');
-  const unprefixed = normalized.replace(/^airtable[_.]/, '');
+  const unprefixed = normalized.replace(/^(?:airtable|trello)[_.]/, '');
   if (unprefixed === 'issue_label') return 'label';
   if (unprefixed === 'data_source') return 'database';
   if (unprefixed === 'records') return 'record';
+  if (unprefixed === 'boards') return 'board';
+  if (unprefixed === 'lists') return 'list';
+  if (unprefixed === 'cards') return 'card';
+  if (unprefixed === 'checklists') return 'checklist';
+  if (unprefixed === 'labels') return 'label';
+  if (unprefixed === 'workspaces' || unprefixed === 'organization') return 'workspace';
   return unprefixed;
 }
 

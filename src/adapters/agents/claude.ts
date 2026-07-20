@@ -46,6 +46,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
           notion: { status: 'unknown', detail: 'Claude Code is unavailable.' },
           linear: { status: 'unknown', detail: 'Claude Code is unavailable.' },
           airtable: { status: 'unknown', detail: 'Claude Code is unavailable.' },
+          trello: { status: 'unknown', detail: 'Claude Code is unavailable.' },
         },
         warnings: ['Install Claude Code before selecting --agent claude.'],
       };
@@ -74,6 +75,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
         notion: claudeMcpReadiness(mcpExitCode, mcpOutput, 'notion'),
         linear: claudeMcpReadiness(mcpExitCode, mcpOutput, 'linear'),
         airtable: claudeMcpReadiness(mcpExitCode, mcpOutput, 'airtable'),
+        trello: claudeMcpReadiness(mcpExitCode, mcpOutput, 'trello'),
       },
       warnings: supportsNonInteractive
         ? ['Authentication readiness will be confirmed by the first noninteractive invocation.']
@@ -169,7 +171,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
     runDirectory: string,
     phase: AgentPhase,
     prompt: string,
-    tool: 'notion' | 'linear' | 'airtable' | 'mock',
+    tool: 'notion' | 'linear' | 'airtable' | 'trello' | 'mock',
     runId: string,
   ): Promise<void> {
     const diagnostic = await this.requireReady(runDirectory, phase, prompt);
@@ -178,9 +180,9 @@ export class ClaudeAgentAdapter implements AgentAdapter {
       if (phase === 'destination-discover') {
         throw new AurousError({
           code: 'AUR-DEST-008',
-          summary: `${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : 'Airtable'} is not connected to Claude Code yet.`,
+          summary: `${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : tool === 'trello' ? 'Trello' : 'Airtable'} is not connected to Claude Code yet.`,
           probableCause: 'The selected local agent cannot access this integration.',
-          nextAction: `Connect ${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : 'Airtable'} in Claude Code, then repeat the request.`,
+          nextAction: `Connect ${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : tool === 'trello' ? 'Trello' : 'Airtable'} in Claude Code, then repeat the request.`,
           severity: 'recoverable',
           runId,
         });
@@ -322,7 +324,7 @@ function invocationRunId(
 function claudeMcpReadiness(
   exitCode: number,
   output: string,
-  name: 'notion' | 'linear' | 'airtable',
+  name: 'notion' | 'linear' | 'airtable' | 'trello',
 ): AgentDiagnostic['mcp']['notion'] {
   if (exitCode !== 0)
     return { status: 'unknown', detail: 'Could not inspect Claude Code MCP configuration.' };

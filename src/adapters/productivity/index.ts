@@ -4,6 +4,7 @@ import { LinearAdapter } from './linear.js';
 import { AirtableAdapter } from './airtable.js';
 import { MockProductivityAdapter } from './mock.js';
 import { NotionAdapter } from './notion.js';
+import { TrelloAdapter } from './trello.js';
 import type { ProductivityAdapter } from './types.js';
 
 export function createProductivityAdapter(name: ToolName): ProductivityAdapter {
@@ -14,6 +15,8 @@ export function createProductivityAdapter(name: ToolName): ProductivityAdapter {
       return new LinearAdapter();
     case 'airtable':
       return new AirtableAdapter();
+    case 'trello':
+      return new TrelloAdapter();
     case 'mock':
       return new MockProductivityAdapter();
     default:
@@ -21,7 +24,7 @@ export function createProductivityAdapter(name: ToolName): ProductivityAdapter {
         code: 'AUR-TOOL-001',
         summary: `Unsupported productivity tool: ${String(name)}`,
         probableCause: 'The saved configuration names an adapter this version does not support.',
-        nextAction: 'Choose notion, linear, airtable, or mock.',
+        nextAction: 'Choose notion, linear, airtable, trello, or mock.',
       });
   }
 }

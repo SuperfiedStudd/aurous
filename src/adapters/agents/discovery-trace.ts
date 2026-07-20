@@ -104,10 +104,12 @@ function discoveryPurpose(integration: ToolName, operation: string): string {
         ? 'Linear'
         : integration === 'airtable'
           ? 'Airtable'
-          : 'Mock';
+          : integration === 'trello'
+            ? 'Trello'
+            : 'Mock';
   if (/search|query/i.test(operation))
     return `Find accessible ${display} destinations and exact project-object matches.`;
-  if (/fetch|get|retrieve|inspect/i.test(operation))
+  if (/fetch|get|retrieve|inspect|read/i.test(operation))
     return `Inspect an exact ${display} object and its identity or relationships.`;
   if (/list|children/i.test(operation))
     return `List accessible ${display} destinations or related child objects.`;

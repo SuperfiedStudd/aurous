@@ -58,6 +58,7 @@ export class CodexAgentAdapter implements AgentAdapter {
           notion: { status: 'unknown', detail: 'Codex is unavailable.' },
           linear: { status: 'unknown', detail: 'Codex is unavailable.' },
           airtable: { status: 'unknown', detail: 'Codex is unavailable.' },
+          trello: { status: 'unknown', detail: 'Codex is unavailable.' },
         },
         warnings: ['Install Codex CLI before selecting --agent codex.'],
       };
@@ -86,6 +87,7 @@ export class CodexAgentAdapter implements AgentAdapter {
         notion: mcpReadiness(mcp.exitCode ?? -1, mcpOutput, 'notion'),
         linear: mcpReadiness(mcp.exitCode ?? -1, mcpOutput, 'linear'),
         airtable: mcpReadiness(mcp.exitCode ?? -1, mcpOutput, 'airtable'),
+        trello: mcpReadiness(mcp.exitCode ?? -1, mcpOutput, 'trello'),
       },
       warnings: supportsNonInteractive
         ? []
@@ -194,7 +196,7 @@ export class CodexAgentAdapter implements AgentAdapter {
     runDirectory: string,
     phase: AgentPhase,
     prompt: string,
-    tool: 'notion' | 'linear' | 'airtable' | 'mock',
+    tool: 'notion' | 'linear' | 'airtable' | 'trello' | 'mock',
     runId: string,
   ): Promise<void> {
     const diagnostic = await this.requireReady(runDirectory, phase, prompt);
@@ -203,9 +205,9 @@ export class CodexAgentAdapter implements AgentAdapter {
       if (phase === 'destination-discover') {
         throw new AurousError({
           code: 'AUR-DEST-008',
-          summary: `${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : 'Airtable'} is not connected to Codex yet.`,
+          summary: `${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : tool === 'trello' ? 'Trello' : 'Airtable'} is not connected to Codex yet.`,
           probableCause: 'The selected local agent cannot access this integration.',
-          nextAction: `Connect ${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : 'Airtable'} in Codex, then repeat the request.`,
+          nextAction: `Connect ${tool === 'notion' ? 'Notion' : tool === 'linear' ? 'Linear' : tool === 'trello' ? 'Trello' : 'Airtable'} in Codex, then repeat the request.`,
           severity: 'recoverable',
           runId,
         });
@@ -404,7 +406,7 @@ export function buildCodexInvocationArgs(
   phase: AgentPhase,
   schemaPath: string,
   outputPath: string,
-  executionTool?: 'notion' | 'linear' | 'airtable' | 'mock',
+  executionTool?: 'notion' | 'linear' | 'airtable' | 'trello' | 'mock',
   model?: string,
 ): string[] {
   const args = ['exec', '--skip-git-repo-check', '--ephemeral', '--sandbox', 'read-only'];
@@ -432,7 +434,7 @@ function executionTool(
     | PlanExecutionInput
     | RecoveryInspectionInput
     | RecoveryActionExecutionInput,
-): 'notion' | 'linear' | 'airtable' | 'mock' | undefined {
+): 'notion' | 'linear' | 'airtable' | 'trello' | 'mock' | undefined {
   if ('plan' in input) return input.plan.tool;
   if ('discoveryId' in input) return input.productivity.name;
   if ('recoveryPlan' in input) return input.recoveryPlan.tool;
@@ -488,7 +490,7 @@ const requiredCodexFlags = [
 function mcpReadiness(
   exitCode: number,
   output: string,
-  name: 'notion' | 'linear' | 'airtable',
+  name: 'notion' | 'linear' | 'airtable' | 'trello',
 ): AgentDiagnostic['mcp']['notion'] {
   if (exitCode !== 0)
     return { status: 'unknown', detail: 'Could not inspect Codex MCP configuration.' };

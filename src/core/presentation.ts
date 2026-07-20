@@ -263,5 +263,6 @@ function toolDisplayName(tool: ToolName): string {
   if (tool === 'notion') return 'Notion';
   if (tool === 'linear') return 'Linear';
   if (tool === 'airtable') return 'Airtable';
+  if (tool === 'trello') return 'Trello';
   return 'Mock';
 }

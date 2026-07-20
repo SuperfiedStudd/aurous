@@ -24,6 +24,7 @@ export class MockAgentAdapter implements AgentAdapter {
         notion: { status: 'ready', detail: 'Simulated by mock adapter.' },
         linear: { status: 'ready', detail: 'Simulated by mock adapter.' },
         airtable: { status: 'ready', detail: 'Simulated by mock adapter.' },
+        trello: { status: 'ready', detail: 'Simulated by mock adapter.' },
       },
       warnings: [],
     });
@@ -71,14 +72,23 @@ export class MockAgentAdapter implements AgentAdapter {
                 url: null,
                 existingAurousMatch: false,
               }
-            : {
-                id: 'mock-workspace-id',
-                name: 'Local workspace',
-                kind: 'workspace',
-                description: 'Local deterministic workspace',
-                url: null,
-                existingAurousMatch: false,
-              };
+            : input.productivity.name === 'trello'
+              ? {
+                  id: 'mock-trello-workspace-id',
+                  name: 'Aurous Workspace',
+                  kind: 'workspace',
+                  description: 'Authorized Trello workspace',
+                  url: null,
+                  existingAurousMatch: false,
+                }
+              : {
+                  id: 'mock-workspace-id',
+                  name: 'Local workspace',
+                  kind: 'workspace',
+                  description: 'Local deterministic workspace',
+                  url: null,
+                  existingAurousMatch: false,
+                };
     const value = {
       integration: input.productivity.name,
       candidates: [candidate],
@@ -224,11 +234,12 @@ export class MockAgentAdapter implements AgentAdapter {
 }
 
 function createMockProposal(
-  tool: 'notion' | 'linear' | 'airtable' | 'mock',
+  tool: 'notion' | 'linear' | 'airtable' | 'trello' | 'mock',
   objective: string,
 ): PlanProposal {
   if (tool === 'linear') return linearProposal(objective);
   if (tool === 'notion') return notionProposal(objective);
+  if (tool === 'trello') return trelloProposal(objective);
   const action: PlanAction = {
     id: 'action-001',
     operation: 'create',
@@ -434,6 +445,165 @@ function linearProposal(objective: string): PlanProposal {
     destructiveActions: [],
     expectedResult:
       'A Linear project with a foundation milestone, label, and prioritized starter issue.',
+  };
+}
+
+function trelloProposal(objective: string): PlanProposal {
+  const cards = [
+    {
+      id: 'action-005',
+      listActionId: 'action-002',
+      list: 'Build',
+      name: 'Complete README',
+      purpose: 'Finish the README for submission.',
+    },
+    {
+      id: 'action-006',
+      listActionId: 'action-003',
+      list: 'Demo',
+      name: 'Record demo',
+      purpose: 'Record the demo walkthrough.',
+    },
+    {
+      id: 'action-007',
+      listActionId: 'action-004',
+      list: 'Submit',
+      name: 'Devpost submission',
+      purpose: 'Prepare and submit the Devpost entry.',
+    },
+    {
+      id: 'action-008',
+      listActionId: 'action-002',
+      list: 'Build',
+      name: 'Notion readiness',
+      purpose: 'Confirm Notion integration readiness.',
+    },
+    {
+      id: 'action-009',
+      listActionId: 'action-002',
+      list: 'Build',
+      name: 'Linear readiness',
+      purpose: 'Confirm Linear integration readiness.',
+    },
+    {
+      id: 'action-010',
+      listActionId: 'action-002',
+      list: 'Build',
+      name: 'Airtable readiness',
+      purpose: 'Confirm Airtable integration readiness.',
+    },
+    {
+      id: 'action-011',
+      listActionId: 'action-002',
+      list: 'Build',
+      name: 'Trello readiness',
+      purpose: 'Confirm Trello integration readiness.',
+    },
+  ] as const;
+
+  return {
+    proposedWorkspaceStructure: [
+      { kind: 'board', name: 'Aurous Launch HQ', purpose: 'Track Build Week launch work.' },
+      { kind: 'list', name: 'Build', purpose: 'Work in progress.', parent: 'Aurous Launch HQ' },
+      { kind: 'list', name: 'Demo', purpose: 'Demo preparation.', parent: 'Aurous Launch HQ' },
+      { kind: 'list', name: 'Submit', purpose: 'Submission work.', parent: 'Aurous Launch HQ' },
+      ...cards.map((card) => ({
+        kind: 'card',
+        name: card.name,
+        purpose: card.purpose,
+        parent: card.list,
+      })),
+      {
+        kind: 'checklist',
+        name: 'Launch checklist',
+        purpose: 'Devpost launch checklist.',
+        parent: 'Devpost submission',
+      },
+    ],
+    plannedActions: [
+      {
+        id: 'action-001',
+        operation: 'create',
+        objectType: 'board',
+        target: 'Aurous Launch HQ',
+        description: 'Create the Aurous Launch HQ board in the authorized workspace.',
+        properties: propertyEntries({ 'trello.board': 'Aurous Launch HQ', objective }),
+        dependsOn: [],
+      },
+      {
+        id: 'action-002',
+        operation: 'create',
+        objectType: 'list',
+        target: 'Build',
+        description: 'Create the Build list.',
+        properties: propertyEntries({
+          'trello.boardActionId': 'action-001',
+          'trello.board': 'Aurous Launch HQ',
+        }),
+        dependsOn: ['action-001'],
+      },
+      {
+        id: 'action-003',
+        operation: 'create',
+        objectType: 'list',
+        target: 'Demo',
+        description: 'Create the Demo list.',
+        properties: propertyEntries({
+          'trello.boardActionId': 'action-001',
+          'trello.board': 'Aurous Launch HQ',
+        }),
+        dependsOn: ['action-001'],
+      },
+      {
+        id: 'action-004',
+        operation: 'create',
+        objectType: 'list',
+        target: 'Submit',
+        description: 'Create the Submit list.',
+        properties: propertyEntries({
+          'trello.boardActionId': 'action-001',
+          'trello.board': 'Aurous Launch HQ',
+        }),
+        dependsOn: ['action-001'],
+      },
+      ...cards.map((card) => ({
+        id: card.id,
+        operation: 'create' as const,
+        objectType: 'card',
+        target: card.name,
+        description: `Create the ${card.name} card in ${card.list}.`,
+        properties: propertyEntries({
+          'trello.boardActionId': 'action-001',
+          'trello.listActionId': card.listActionId,
+          'trello.list': card.list,
+          'trello.board': 'Aurous Launch HQ',
+        }),
+        dependsOn: ['action-001', card.listActionId],
+      })),
+      {
+        id: 'action-012',
+        operation: 'create',
+        objectType: 'checklist',
+        target: 'Launch checklist',
+        description: 'Add the launch checklist to the Devpost submission card.',
+        properties: propertyEntries({
+          'trello.cardActionId': 'action-007',
+          'trello.card': 'Devpost submission',
+        }),
+        dependsOn: ['action-007'],
+      },
+    ],
+    assumptions: [
+      'The authorized Trello workspace is already connected; Aurous will not create a workspace.',
+      'Only the requested board, lists, cards, and one checklist are required.',
+    ],
+    warnings: [
+      'Do not create duplicates.',
+      'Mock planning does not invent label IDs; no labels are created.',
+    ],
+    destructiveActions: [],
+    expectedResult:
+      'One Aurous Launch HQ board with Build, Demo, and Submit lists, essential launch cards, and one launch checklist on Devpost submission.',
   };
 }
 

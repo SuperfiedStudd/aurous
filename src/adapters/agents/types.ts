@@ -25,7 +25,7 @@ export interface AgentDiagnostic {
   version?: string;
   supportsNonInteractive: boolean;
   authentication: { status: Readiness; detail: string };
-  mcp: Record<'notion' | 'linear' | 'airtable', { status: Readiness; detail: string }>;
+  mcp: Record<'notion' | 'linear' | 'airtable' | 'trello', { status: Readiness; detail: string }>;
   warnings: string[];
 }
 
@@ -123,6 +123,7 @@ export function emptyMcpDiagnostic(): AgentDiagnostic['mcp'] {
     notion: { status: 'unknown', detail: 'Not checked.' },
     linear: { status: 'unknown', detail: 'Not checked.' },
     airtable: { status: 'unknown', detail: 'Not checked.' },
+    trello: { status: 'unknown', detail: 'Not checked.' },
   };
 }
 

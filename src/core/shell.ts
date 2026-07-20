@@ -246,7 +246,7 @@ export class AurousShell {
     }
     const parsed = ToolNameSchema.safeParse(args[0]?.toLowerCase());
     if (!parsed.success)
-      throw shellInputError('target', 'Choose notion, linear, airtable, or mock.');
+      throw shellInputError('target', 'Choose notion, linear, airtable, trello, or mock.');
     state.target = parsed.data;
     delete state.destinationName;
     delete state.linearTeam;
@@ -309,7 +309,7 @@ export class AurousShell {
     if (subcommand === 'forget') {
       const parsed = ToolNameSchema.safeParse(args[1]?.toLowerCase());
       if (!parsed.success)
-        throw shellInputError('context', 'Use /context forget notion|linear|airtable.');
+        throw shellInputError('context', 'Use /context forget notion|linear|airtable|trello.');
       const store = this.contextStore();
       await store.forgetDestination(parsed.data);
       if (state.target === parsed.data) {
@@ -327,7 +327,7 @@ export class AurousShell {
       if (!parsed.success || !id || !name)
         throw shellInputError(
           'context',
-          'Advanced usage: /context override notion|linear|airtable <id-or-url> <friendly-name>.',
+          'Advanced usage: /context override notion|linear|airtable|trello <id-or-url> <friendly-name>.',
         );
       state.destinationOverride = { integration: parsed.data, id, name };
       this.setReady(`Advanced ${displayTarget(parsed.data)} destination override staged.`);
@@ -818,12 +818,26 @@ export function createReadlineShellTerminal(
 }
 
 export function routeNaturalRequest(request: string, currentTarget: ToolName): ToolName {
+  if (explicitTrelloRequest(request)) return 'trello';
   const directTarget = request
-    .match(/^\s*(?:set\s+up|create|build|organize)\s+(?:an?\s+)?(airtable|linear|notion)\b/i)?.[1]
+    .match(
+      /^\s*(?:set\s+up|create|build|organize)\s+(?:an?\s+)?(airtable|linear|notion|trello)\b/i,
+    )?.[1]
     ?.toLocaleLowerCase();
-  if (directTarget === 'airtable' || directTarget === 'linear' || directTarget === 'notion')
+  if (
+    directTarget === 'airtable' ||
+    directTarget === 'linear' ||
+    directTarget === 'notion' ||
+    directTarget === 'trello'
+  )
     return directTarget;
   return currentTarget;
+}
+
+function explicitTrelloRequest(request: string): boolean {
+  if (/\b(?:set\s+up|create|build|organize)\s+(?:an?\s+)?trello\b/i.test(request)) return true;
+  if (/\buse\s+trello\b/i.test(request)) return true;
+  return false;
 }
 
 export function tokenize(input: string): string[] {
@@ -887,6 +901,7 @@ function displayTarget(target: ToolName): string {
   if (target === 'linear') return 'Linear';
   if (target === 'notion') return 'Notion';
   if (target === 'airtable') return 'Airtable';
+  if (target === 'trello') return 'Trello';
   return 'Mock';
 }
 

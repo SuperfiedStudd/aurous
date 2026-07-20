@@ -249,7 +249,7 @@ describe('dynamic interactive Aurous shell', () => {
     const rendered = terminal.rendered();
     expect(rendered).toContain('! Invalid agent selection. Choose codex, claude, or mock.');
     expect(rendered).toContain(
-      '! Invalid target selection. Choose notion, linear, airtable, or mock.',
+      '! Invalid target selection. Choose notion, linear, airtable, trello, or mock.',
     );
     expect(rendered).toContain('! Invalid apply selection. Create a plan first');
     expect(rendered).not.toContain('Fatal internal error');
@@ -457,6 +457,15 @@ describe('shell parsing and routing', () => {
         'linear',
       ),
     ).toBe('airtable');
+    expect(
+      routeNaturalRequest(
+        'Set up a Trello board for tracking our Notion, Linear, and Airtable launch.',
+        'notion',
+      ),
+    ).toBe('trello');
+    expect(
+      routeNaturalRequest('Use Trello to track readiness across Notion and Linear.', 'airtable'),
+    ).toBe('trello');
     expect(routeNaturalRequest('Organize my current project', 'notion')).toBe('notion');
   });
 
