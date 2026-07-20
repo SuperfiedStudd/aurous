@@ -269,16 +269,18 @@ describe('shared destination resolution', () => {
         [candidate('team-product', 'Product', 'team')],
         [
           {
-            id: 'JAS-11',
+            id: 'aaaaaaaa-1111-4222-8333-444444444444',
             name: 'Prepare launch',
             type: 'issue',
             destinationId: 'team-product',
+            identifier: 'JAS-11',
           },
           {
-            id: 'JAS-5',
+            id: 'bbbbbbbb-1111-4222-8333-444444444444',
             name: 'Prepare launch',
             type: 'issue',
             destinationId: 'team-product',
+            identifier: 'JAS-5',
           },
         ],
       ),
@@ -303,7 +305,11 @@ describe('shared destination resolution', () => {
     const bound = adapter.bindDestination(issueProposal, resolved!);
     expect(bound.plannedActions[0]?.properties).toContainEqual({
       key: 'linear.dedupe.knownExternalId',
-      value: 'JAS-5',
+      value: 'aaaaaaaa-1111-4222-8333-444444444444',
+    });
+    expect(bound.plannedActions[0]?.properties).toContainEqual({
+      key: 'linear.issueKey',
+      value: 'JAS-11',
     });
     expect(bound.warnings.join('\n')).toContain('selected one canonical exact object');
     expect(bound.warnings.join('\n')).toContain('will remain untouched');

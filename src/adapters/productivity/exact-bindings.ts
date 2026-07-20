@@ -69,7 +69,10 @@ export function resolveExactObject(
   if (byStructuredId.length > 1) {
     throw ambiguousExactBindingError(action, byStructuredId);
   }
-  if (byStructuredId[0]) return byStructuredId[0];
+  if (byStructuredId[0]) {
+    if (tool === 'linear') assertLinearIssueHasUuid(byStructuredId[0], action);
+    return byStructuredId[0];
+  }
 
   const lookupNames = candidateLookupNames(action, tool);
   const byName = uniqueObjects(
@@ -87,29 +90,104 @@ export function resolveExactObject(
     if (parentKeys.size > 1 && parentId === undefined)
       throw ambiguousExactBindingError(action, byName);
   }
-  if (byName[0]) return byName[0];
+  if (byName[0]) {
+    if (tool === 'linear') assertLinearIssueHasUuid(byName[0], action);
+    return byName[0];
+  }
 
   if (tool === 'linear') {
     const issueKeys = candidateIssueKeys(action);
     const byKey = uniqueObjects(
-      issueKeys
-        .map((key) => destination.existingObjects.find((object) => object.id === key))
-        .filter((object): object is DiscoveredObject => Boolean(object))
-        .filter(
+      issueKeys.flatMap((key) =>
+        destination.existingObjects.filter(
           (object) =>
             exactObjectTypeMatches(tool, object.type, action.objectType) &&
-            (parentId === undefined || (object.parentId ?? destination.id) === parentId),
+            (parentId === undefined || (object.parentId ?? destination.id) === parentId) &&
+            (object.identifier === key ||
+              linearIssueKeyFromObject(object) === key ||
+              object.id === key),
         ),
+      ),
     );
-    if (byKey.length > 1) {
-      const parentKeys = new Set(byKey.map((object) => object.parentId ?? destination.id));
-      if (parentKeys.size > 1 && parentId === undefined)
-        throw ambiguousExactBindingError(action, byKey);
+    if (byKey.length === 0 && issueKeys.length > 0 && requiresIssueKeyResolution(action)) {
+      throw unresolvedLinearIssueKeyError(action, issueKeys);
     }
-    if (byKey[0]) return byKey[0];
+    if (byKey.length > 1) throw ambiguousExactBindingError(action, byKey);
+    if (byKey[0]) {
+      assertLinearIssueHasUuid(byKey[0], action);
+      return byKey[0];
+    }
   }
 
   return undefined;
+}
+
+export function looksLikeIssueKey(value: string): boolean {
+  return /^[A-Z][A-Z0-9]+-\d+$/i.test(value.trim());
+}
+
+export function isLinearIssueUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
+}
+
+export function linearIssueKeyFromObject(object: DiscoveredObject): string | undefined {
+  if (object.identifier && looksLikeIssueKey(object.identifier)) return object.identifier;
+  const fromUrl = object.url?.match(/\/issue\/([A-Z][A-Z0-9]+-\d+)(?:\/|$)/i)?.[1];
+  return fromUrl && looksLikeIssueKey(fromUrl) ? fromUrl : undefined;
+}
+
+export function assertLinearIssueHasUuid(object: DiscoveredObject, action?: PlanAction): void {
+  if (!exactObjectTypeMatches('linear', object.type, 'issue')) return;
+  if (isLinearIssueUuid(object.id)) return;
+  throw new AurousError({
+    code: 'AUR-PLAN-010',
+    summary: action
+      ? `Action ${action.id} matched Linear issue ${JSON.stringify(object.name)}, but discovery did not provide an immutable issue UUID.`
+      : `Linear issue ${JSON.stringify(object.name)} is missing an immutable issue UUID.`,
+    probableCause:
+      'Discovery returned a human-readable issue key where the immutable Linear issue UUID was required.',
+    nextAction:
+      'No writes were attempted. Re-run Linear discovery and resolve each issue to its UUID before planning.',
+  });
+}
+
+export function relationAlreadySatisfied(
+  existing: DiscoveredObject,
+  requiredRelatedIds: string[],
+): boolean {
+  if (requiredRelatedIds.length === 0) return false;
+  const current = existing.linkedIds ?? [];
+  if (current.length === 0) return false;
+  return requiredRelatedIds.every((id) => current.includes(id));
+}
+
+export function stampAlreadySatisfiedRelation(
+  action: PlanAction,
+  namespace: ExactBindingNamespace,
+): PlanAction {
+  const properties = action.properties.filter(
+    (property) => property.key !== `${namespace}.dedupe.skipReason`,
+  );
+  properties.push({
+    key: `${namespace}.dedupe.skipReason`,
+    value: 'already-satisfied-relation',
+  });
+  return {
+    ...action,
+    description: `Skip no-op: the exact relation is already satisfied on the verified object. ${action.description}`,
+    properties,
+  };
+}
+
+export function parseRelatedIdList(value: string | undefined): string[] {
+  if (!value || isNullishPropertyValue(value)) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) return parsed;
+  } catch {
+    // Single ID string.
+  }
+  return [value];
 }
 
 export function stampExactExternalId(
@@ -309,7 +387,10 @@ function structuredCandidateIds(action: PlanAction, tool: ToolName): string[] {
     return compact([propertyValue(action.properties, 'airtable.recordId')]);
   }
   if (tool === 'linear') {
-    return compact([propertyValue(action.properties, ['linear.issueId', 'issueId'])]);
+    const issueId = propertyValue(action.properties, ['linear.issueId', 'issueId']);
+    // Issue keys are resolved via identifier lookup, never as structured UUID candidates.
+    if (issueId && looksLikeIssueKey(issueId)) return [];
+    return compact([issueId]);
   }
   if (tool === 'notion') {
     return compact([
@@ -361,18 +442,28 @@ function candidateIssueKeys(action: PlanAction): string[] {
   ]).filter(looksLikeIssueKey);
 }
 
-function looksLikeIssueKey(value: string): boolean {
-  return /^[A-Z][A-Z0-9]+-\d+$/i.test(value.trim());
+function requiresIssueKeyResolution(action: PlanAction): boolean {
+  return (
+    action.operation === 'update' ||
+    action.operation === 'link' ||
+    /\b(?:reuse|reconcile|skip|existing)\b/i.test(action.description) ||
+    Boolean(propertyValue(action.properties, ['linear.issueKey', 'issueKey']))
+  );
+}
+
+function unresolvedLinearIssueKeyError(action: PlanAction, issueKeys: string[]): AurousError {
+  return new AurousError({
+    code: 'AUR-PLAN-010',
+    summary: `Action ${action.id} could not resolve Linear issue key ${JSON.stringify(issueKeys.join(', '))} to exactly one immutable issue UUID.`,
+    probableCause:
+      'Issue-key lookup returned zero inspected issues, or the key was never paired with a UUID during discovery.',
+    nextAction:
+      'No writes were attempted. Re-run Linear discovery and bind the exact issue UUID before preview.',
+  });
 }
 
 function parseStringOrJsonArray(value: string): string[] {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) return parsed;
-  } catch {
-    // Single ID string.
-  }
-  return [value];
+  return parseRelatedIdList(value);
 }
 
 function uniqueObjects(objects: DiscoveredObject[]): DiscoveredObject[] {

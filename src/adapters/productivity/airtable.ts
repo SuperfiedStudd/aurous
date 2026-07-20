@@ -3,8 +3,11 @@ import type { DestinationCandidate, ResolvedDestination } from '../../domain/des
 import {
   exactBindingWarnings,
   normalizeRelationAction,
+  parseRelatedIdList,
   propertyValue,
+  relationAlreadySatisfied,
   resolveExactObject,
+  stampAlreadySatisfiedRelation,
   stampExactExternalId,
 } from './exact-bindings.js';
 import type { ProductivityAdapter } from './types.js';
@@ -66,6 +69,12 @@ NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one 
           ],
         };
         if (existing) bound = stampExactExternalId(bound, existing, 'airtable');
+        const linkedIds = parseRelatedIdList(
+          propertyValue(bound.properties, 'airtable.linkedRecordIds'),
+        );
+        if (existing && relationAlreadySatisfied(existing, linkedIds)) {
+          bound = stampAlreadySatisfiedRelation(bound, 'airtable');
+        }
         return bound;
       }),
       assumptions: [

@@ -28,6 +28,10 @@ export const DiscoveredObjectSchema = z.object({
   destinationId: z.string().min(1),
   url: z.string().url().nullish(),
   parentId: z.string().nullish(),
+  /** Human-readable Linear issue key (e.g. JAS-17). Never authorizes mutation. */
+  identifier: z.string().min(1).optional(),
+  /** Currently linked related object IDs when discovery inspected them. */
+  linkedIds: z.array(z.string().min(1)).optional(),
 });
 export type DiscoveredObject = z.infer<typeof DiscoveredObjectSchema>;
 

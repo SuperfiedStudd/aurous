@@ -89,7 +89,8 @@ const airtableDestination: ResolvedDestination = {
   discoveryWarnings: [],
 };
 
-/** Sanitized Linear fixture modeled on run-20260720T194305Z-75a5e1. */
+/** Sanitized Linear fixture modeled on run-20260720T194305Z-75a5e1 (UUID identity). */
+const linearIssueUuid = '11111111-2222-4333-8444-555555555555';
 const linearDestination: ResolvedDestination = {
   integration: 'linear',
   id: 'bb8b0d4d-79b8-4d7d-a635-69bfacf82b9b',
@@ -107,18 +108,21 @@ const linearDestination: ResolvedDestination = {
       parentId: 'bb8b0d4d-79b8-4d7d-a635-69bfacf82b9b',
     },
     {
-      id: 'JAS-17',
+      id: linearIssueUuid,
       name: 'Complete the README for Build Week launch',
       type: 'issue',
       destinationId: 'bb8b0d4d-79b8-4d7d-a635-69bfacf82b9b',
       parentId: '58f32b14-0b3d-4da3-8b41-91280ad54a8e',
+      identifier: 'JAS-17',
+      url: 'https://linear.app/jasjyotsingh/issue/JAS-17/complete-the-readme-for-build-week-launch',
     },
     {
-      id: 'issue-other-team-title',
+      id: '22222222-3333-4444-8555-666666666666',
       name: 'Complete the README for Build Week launch',
       type: 'issue',
       destinationId: 'bb8b0d4d-79b8-4d7d-a635-69bfacf82b9b',
       parentId: 'project-other',
+      identifier: 'JAS-99',
     },
   ],
   discoveryWarnings: [],
@@ -306,35 +310,34 @@ describe('exact-ID binding for reuse, update, and relations', () => {
     );
   });
 
-  it('resolves Linear JAS-17 to the exact discovered issue external ID', () => {
+  it('resolves Linear JAS-17 to the exact discovered issue UUID', () => {
     const adapter = new LinearAdapter();
     const bound = adapter.bindDestination(linearIssueProposal(), linearDestination);
     const action = bound.plannedActions[0]!;
     expect(action.target).toBe('Complete the README for Build Week launch');
     expect(action.properties).toEqual(
       expect.arrayContaining([
-        { key: 'linear.dedupe.knownExternalId', value: 'JAS-17' },
-        { key: 'linear.issueId', value: 'JAS-17' },
+        { key: 'linear.dedupe.knownExternalId', value: linearIssueUuid },
+        { key: 'linear.issueId', value: linearIssueUuid },
         { key: 'linear.issueKey', value: 'JAS-17' },
       ]),
     );
     expect(action.properties.some((property) => property.value === 'null')).toBe(false);
   });
 
-  it('keeps an issue key alone insufficient for mutation authorization', async () => {
+  it('proves JAS-17 alone cannot authorize an update', async () => {
     const proposal = linearIssueProposal();
     proposal.plannedActions[0] = {
       ...proposal.plannedActions[0]!,
-      properties: proposal.plannedActions[0]!.properties.filter(
-        (property) =>
-          property.key !== 'linear.issueId' &&
-          property.key !== 'linear.title' &&
-          property.key !== 'linear.projectId',
-      ),
       target: 'JAS-17',
-      description: 'Update JAS-17 without binding discovery.',
+      description: 'Update JAS-17.',
+      properties: [
+        { key: 'linear.teamId', value: linearDestination.id },
+        { key: 'linear.issueId', value: 'JAS-17' },
+        { key: 'linear.issueKey', value: 'JAS-17' },
+        { key: 'linear.dedupe.knownExternalId', value: 'JAS-17' },
+      ],
     };
-    // Empty discovery so the key cannot resolve to an inspected external ID.
     await expect(
       planWithProposal(
         'linear',
@@ -354,9 +357,26 @@ describe('exact-ID binding for reuse, update, and relations', () => {
           warnings: [],
         },
         proposal,
-        'Reuse JAS-17',
+        'Update JAS-17',
       ),
-    ).rejects.toMatchObject({ code: 'AUR-PLAN-009' });
+    ).rejects.toMatchObject({ code: 'AUR-PLAN-010' });
+  });
+
+  it('stops safely when a Linear issue key resolves to zero UUIDs', async () => {
+    const proposal = linearIssueProposal();
+    proposal.plannedActions[0] = {
+      ...proposal.plannedActions[0]!,
+      properties: [
+        { key: 'linear.teamId', value: linearDestination.id },
+        { key: 'linear.issueKey', value: 'JAS-404' },
+        { key: 'linear.issueId', value: 'JAS-404' },
+      ],
+      target: 'JAS-404',
+      description: 'Reuse missing issue JAS-404.',
+    };
+    await expect(
+      planWithProposal('linear', discoveryFrom(linearDestination), proposal, 'Reuse JAS-404'),
+    ).rejects.toMatchObject({ code: 'AUR-PLAN-010' });
   });
 
   it('does not bind the same Linear title under another project parent', () => {
@@ -376,23 +396,104 @@ describe('exact-ID binding for reuse, update, and relations', () => {
         'linear',
         '58f32b14-0b3d-4da3-8b41-91280ad54a8e',
       )?.id,
-    ).toBe('JAS-17');
+    ).toBe(linearIssueUuid);
     expect(resolveExactObject(linearDestination, action, 'linear', 'project-other')?.id).toBe(
-      'issue-other-team-title',
+      '22222222-3333-4444-8555-666666666666',
     );
   });
 
-  it('accepts a Linear update once the exact discovered issue ID is bound', async () => {
+  it('accepts a Linear update once the exact discovered issue UUID is bound', async () => {
     const plan = await planWithProposal(
       'linear',
       discoveryFrom(linearDestination),
       linearIssueProposal(),
       'Reuse JAS-17 for README completion',
     );
-    expect(plan.plannedActions[0]?.properties).toContainEqual({
-      key: 'linear.dedupe.knownExternalId',
-      value: 'JAS-17',
+    expect(plan.plannedActions[0]?.properties).toEqual(
+      expect.arrayContaining([
+        { key: 'linear.dedupe.knownExternalId', value: linearIssueUuid },
+        { key: 'linear.issueId', value: linearIssueUuid },
+        { key: 'linear.issueKey', value: 'JAS-17' },
+      ]),
+    );
+  });
+
+  it('turns an already-satisfied Airtable relation into a skip no-op with no write', async () => {
+    const destination: ResolvedDestination = {
+      ...airtableDestination,
+      existingObjects: airtableDestination.existingObjects.map((object) =>
+        object.id === 'recAELdj1f2Fnp5gM'
+          ? { ...object, linkedIds: ['rec4Tn5BNce63bHHN'] }
+          : object,
+      ),
+    };
+    const { workspace, store, output } = await serviceFixture();
+    const services = new AurousServices({
+      workspace,
+      store,
+      output,
+      agentFactory: () => planningAgent(discoveryFrom(destination), airtableRelationProposal()),
     });
+    const planned = await services.plan({
+      agent: 'mock',
+      tool: 'airtable',
+      contextPaths: ['.'],
+      objective: 'Link Complete README to Launch deliverables',
+    });
+    expect(planned.plannedActions[0]?.properties).toContainEqual({
+      key: 'airtable.dedupe.skipReason',
+      value: 'already-satisfied-relation',
+    });
+    const result = await services.apply(planned.runId, { confirmed: true });
+    expect(result?.createdObjects).toEqual([]);
+    expect(result?.skippedActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actionId: 'action-001',
+          reason: 'Already-satisfied relation; no write required.',
+          externalId: 'recAELdj1f2Fnp5gM',
+        }),
+      ]),
+    );
+  });
+
+  it('turns an already-satisfied Notion relation into a skip no-op with no write', async () => {
+    const destination: ResolvedDestination = {
+      ...notionDestination,
+      existingObjects: notionDestination.existingObjects.map((object) =>
+        object.id === '3a2c0122-d292-815c-942c-fb042aeb9112'
+          ? { ...object, linkedIds: ['3a2c0122-d292-81ed-b4f6-eab2abb2f67c'] }
+          : object,
+      ),
+    };
+    const { workspace, store, output } = await serviceFixture();
+    const services = new AurousServices({
+      workspace,
+      store,
+      output,
+      agentFactory: () => planningAgent(discoveryFrom(destination), notionRelationProposal()),
+    });
+    const planned = await services.plan({
+      agent: 'mock',
+      tool: 'notion',
+      contextPaths: ['.'],
+      objective: 'Preserve README checklist relation',
+    });
+    expect(planned.plannedActions[0]?.properties).toContainEqual({
+      key: 'notion.dedupe.skipReason',
+      value: 'already-satisfied-relation',
+    });
+    const result = await services.apply(planned.runId, { confirmed: true });
+    expect(result?.createdObjects).toEqual([]);
+    expect(result?.skippedActions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          actionId: 'action-001',
+          reason: 'Already-satisfied relation; no write required.',
+          externalId: '3a2c0122-d292-815c-942c-fb042aeb9112',
+        }),
+      ]),
+    );
   });
 
   it('normalizes Notion relation updates onto the exact source record with structured related IDs', () => {
@@ -586,7 +687,7 @@ describe('exact-ID binding for reuse, update, and relations', () => {
       );
 
     expect(first?.code).toBe('AUR-PLAN-009');
-    expect(second?.code).toBe('AUR-PLAN-009');
+    expect(['AUR-PLAN-009', 'AUR-PLAN-010']).toContain(second?.code);
     expect(first?.runId).toMatch(/^run-/);
     expect(second?.runId).toMatch(/^run-/);
     expect(first?.runId).not.toBe(second?.runId);

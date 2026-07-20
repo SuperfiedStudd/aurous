@@ -5,8 +5,11 @@ import type { PlanProposal } from '../../domain/schemas.js';
 import {
   exactBindingWarnings,
   normalizeRelationAction,
+  parseRelatedIdList,
   propertyValue,
+  relationAlreadySatisfied,
   resolveExactObject,
+  stampAlreadySatisfiedRelation,
   stampExactExternalId,
 } from './exact-bindings.js';
 
@@ -75,6 +78,13 @@ export class NotionAdapter implements ProductivityAdapter {
         properties.push({ key: 'notion.destination.name', value: destination.name });
         let bound = { ...normalized, properties };
         if (existing) bound = stampExactExternalId(bound, existing, 'notion');
+        const relatedIds = parseRelatedIdList(
+          propertyValue(bound.properties, 'notion.relation.targetRecordIds') ??
+            propertyValue(bound.properties, 'notion.relation.targetRecordId'),
+        );
+        if (existing && relationAlreadySatisfied(existing, relatedIds)) {
+          bound = stampAlreadySatisfiedRelation(bound, 'notion');
+        }
         return bound;
       }),
       assumptions: [

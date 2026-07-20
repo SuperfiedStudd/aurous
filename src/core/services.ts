@@ -8,8 +8,10 @@ import {
 import { createProductivityAdapter } from '../adapters/productivity/index.js';
 import {
   exactObjectTypeMatches,
+  looksLikeIssueKey,
   normalizedObjectType,
 } from '../adapters/productivity/exact-bindings.js';
+import { validateLinearDiscoveryIssues } from '../adapters/productivity/linear.js';
 import {
   AgentNameSchema,
   AurousPlanSchema,
@@ -599,6 +601,7 @@ export class AurousServices {
       ...invocation.value,
       inspectedAt: this.now().toISOString(),
     });
+    if (discovery.integration === 'linear') validateLinearDiscoveryIssues(discovery);
     await writeFile(
       path.join(runDirectory, 'destination-discover-agent-response.json'),
       `${JSON.stringify(discovery)}\n`,
@@ -1876,6 +1879,21 @@ function validateExactObjectAuthorizations(
           'Discovery found or implied an existing object, but the immutable action retained only a name-based authorization.',
         nextAction:
           'No writes were attempted. Inspect the object by exact ID or regenerate this action as an explicit create decision.',
+      });
+    }
+    if (
+      tool === 'linear' &&
+      knownId &&
+      exactObjectTypeMatches('linear', action.objectType, 'issue') &&
+      looksLikeIssueKey(knownId)
+    ) {
+      throw new AurousError({
+        code: 'AUR-PLAN-010',
+        summary: `Action ${action.id} cannot authorize a Linear issue update with issue key ${JSON.stringify(knownId)}.`,
+        probableCause:
+          'A human-readable issue key was used where the immutable Linear issue UUID is required.',
+        nextAction:
+          'No writes were attempted. Bind linear.issueId and linear.dedupe.knownExternalId to the discovered UUID; keep the key only in linear.issueKey.',
       });
     }
     if (knownId) {

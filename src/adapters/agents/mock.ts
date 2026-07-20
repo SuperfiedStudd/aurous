@@ -107,8 +107,27 @@ export class MockAgentAdapter implements AgentAdapter {
 
   executePlan(input: PlanExecutionInput) {
     const started = new Date();
+    const skippedActions = input.plan.plannedActions
+      .filter((action) =>
+        action.properties.some(
+          (property) =>
+            property.key.endsWith('.dedupe.skipReason') &&
+            property.value === 'already-satisfied-relation',
+        ),
+      )
+      .map((action) => ({
+        actionId: action.id,
+        type: action.objectType,
+        name: action.target,
+        reason: 'Already-satisfied relation; no write required.',
+        externalId:
+          action.properties.find((property) => property.key.endsWith('.dedupe.knownExternalId'))
+            ?.value ?? `mock-${action.id}`,
+        url: `https://mock.aurous.local/${input.plan.runId}/${action.id}`,
+      }));
+    const skippedIds = new Set(skippedActions.map((action) => action.actionId));
     const createdObjects = input.plan.plannedActions
-      .filter((action) => action.operation === 'create')
+      .filter((action) => action.operation === 'create' && !skippedIds.has(action.id))
       .map((action) => ({
         actionId: action.id,
         type: action.objectType,
@@ -121,7 +140,7 @@ export class MockAgentAdapter implements AgentAdapter {
       status: 'succeeded' as const,
       summary: `Mock execution completed all ${input.plan.plannedActions.length} approved actions.`,
       createdObjects,
-      skippedActions: [],
+      skippedActions,
       completedActionIds: input.plan.plannedActions.map((action) => action.id),
       compatibilityNotes: [],
       warnings: ['Mock mode made no external writes.'],

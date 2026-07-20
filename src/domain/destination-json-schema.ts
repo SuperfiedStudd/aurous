@@ -33,6 +33,8 @@ export const destinationDiscoveryJsonSchema = {
           destinationId: { type: 'string' },
           url: { type: ['string', 'null'] },
           parentId: { type: ['string', 'null'] },
+          identifier: { type: 'string' },
+          linkedIds: { type: 'array', items: { type: 'string' } },
         },
       },
     },
