@@ -1901,7 +1901,58 @@ function validateExactObjectAuthorizations(
     if (tool === 'linear') validateLinearRelationshipIds(action, destination);
     if (tool === 'airtable')
       validateAirtableReferences(action, proposal.plannedActions, destination);
+    if (tool === 'notion') validateNotionRelationshipIds(action, destination);
     if (tool === 'trello') validateTrelloReferences(action, proposal.plannedActions, destination);
+  }
+}
+
+function validateNotionRelationshipIds(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+  destination: ResolvedDestination,
+): void {
+  const targetIdsValue = action.properties.find(
+    (property) =>
+      property.key === 'notion.relation.targetRecordIds' ||
+      property.key === 'notion.relation.targetRecordId',
+  )?.value;
+  if (!targetIdsValue) return;
+  let ids: string[] = [];
+  try {
+    const parsed = JSON.parse(targetIdsValue) as unknown;
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) ids = parsed;
+    else if (typeof targetIdsValue === 'string') ids = [targetIdsValue];
+  } catch {
+    ids = [targetIdsValue];
+  }
+  for (const id of ids) {
+    const exact = destination.existingObjects.find((object) => object.id === id);
+    if (!exact || !exactObjectTypeMatches('notion', exact.type, 'database_record')) {
+      throw new AurousError({
+        code: 'AUR-PLAN-011',
+        summary: `Notion action ${action.id} references an uninspected related record ID.`,
+        probableCause:
+          'Related Notion records must be authorized by exact discovered IDs, not prose.',
+        nextAction:
+          'No writes were attempted. Bind notion.relation.targetRecordIds from discovery.',
+      });
+    }
+  }
+  const sourceId = action.properties.find(
+    (property) => property.key === 'notion.relation.sourceRecordId',
+  )?.value;
+  if (
+    sourceId &&
+    action.properties.find((property) => property.key === 'notion.dedupe.knownExternalId')
+      ?.value !== sourceId
+  ) {
+    throw new AurousError({
+      code: 'AUR-PLAN-009',
+      summary: `Action ${action.id} (${action.objectType} ${JSON.stringify(action.target)}) proposes a relation update without binding the exact source record ID.`,
+      probableCause:
+        'The relation source ID stayed outside the structured exact-authorization field.',
+      nextAction:
+        'No writes were attempted. Bind notion.dedupe.knownExternalId to the source record.',
+    });
   }
 }
 
@@ -1982,6 +2033,60 @@ function validateAirtableReferences(
           'Re-run Airtable discovery. New dependent objects must reference an approved create action ID instead.',
       });
     }
+  }
+  const linkedRecordIds = action.properties.find(
+    (property) => property.key === 'airtable.linkedRecordIds',
+  )?.value;
+  if (linkedRecordIds) {
+    let ids: string[] = [];
+    try {
+      const parsed = JSON.parse(linkedRecordIds) as unknown;
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) ids = parsed;
+      else throw new Error('invalid');
+    } catch {
+      throw new AurousError({
+        code: 'AUR-PLAN-011',
+        summary: `Airtable action ${action.id} has malformed airtable.linkedRecordIds.`,
+        probableCause: 'Linked-record values must be a JSON array of exact inspected record IDs.',
+        nextAction: 'No writes were attempted. Bind exact related record IDs before preview.',
+      });
+    }
+    if (ids.length === 0) {
+      throw new AurousError({
+        code: 'AUR-PLAN-011',
+        summary: `Airtable action ${action.id} omits linked record IDs for a relationship update.`,
+        probableCause: 'A relation mutation cannot authorize related objects from names or prose.',
+        nextAction:
+          'No writes were attempted. Include exact airtable.linkedRecordIds from discovery.',
+      });
+    }
+    for (const id of ids) {
+      const exact = destination.existingObjects.find((object) => object.id === id);
+      if (!exact || !exactObjectTypeMatches('airtable', exact.type, 'record')) {
+        throw new AurousError({
+          code: 'AUR-PLAN-011',
+          summary: `Airtable action ${action.id} references an uninspected linked record ID.`,
+          probableCause:
+            'The immutable airtable.linkedRecordIds value was not returned by discovery.',
+          nextAction: 'Re-run Airtable discovery and bind exact related record IDs before preview.',
+        });
+      }
+    }
+  }
+  if (
+    (action.operation === 'link' ||
+      action.properties.some((property) => property.key === 'airtable.linkedRecordIds')) &&
+    !action.properties.some((property) => property.key === 'airtable.recordId') &&
+    !action.properties.some((property) => property.key === 'airtable.dedupe.knownExternalId')
+  ) {
+    throw new AurousError({
+      code: 'AUR-PLAN-009',
+      summary: `Action ${action.id} (${action.objectType} ${JSON.stringify(action.target)}) proposes a relationship update without an exact target record ID.`,
+      probableCause:
+        'Discovery found or implied existing records, but the mutation target was not bound by exact ID.',
+      nextAction:
+        'No writes were attempted. Bind airtable.recordId / knownExternalId for the source record.',
+    });
   }
   for (const [key, type] of [
     ['airtable.baseActionId', 'base'],
@@ -2139,13 +2244,45 @@ function requiresExactExistingId(
 ): boolean {
   return (
     action.operation === 'update' ||
+    (action.operation === 'link' && requiresExactIdForLink(action)) ||
     /\b(?:reuse|reconcile|skip)\b/i.test(action.description) ||
+    isSyntheticRelationshipCreate(action) ||
     action.properties.some(
       (property) =>
         /\b(?:reuse|existing)\b/i.test(property.key) &&
         !property.key.endsWith('.knownExternalId') &&
         !property.key.endsWith('.knownUrl'),
     )
+  );
+}
+
+function requiresExactIdForLink(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+): boolean {
+  if (action.objectType.toLocaleLowerCase().includes('relation')) return true;
+  if (/\blink\b.+\bto\b/i.test(action.target)) return true;
+  if (/\bexisting\b.+\band\b.+\bexisting\b/i.test(action.target)) return true;
+  return action.properties.some((property) =>
+    [
+      'airtable.recordId',
+      'airtable.linkedRecordIds',
+      'linear.issueId',
+      'notion.relation.sourceRecordId',
+      'notion.relation.targetRecordId',
+      'notion.relation.targetRecordIds',
+      'notion.pageId',
+      'notion.recordId',
+    ].includes(property.key),
+  );
+}
+
+function isSyntheticRelationshipCreate(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+): boolean {
+  if (action.operation !== 'create') return false;
+  return (
+    /\blink\b.+\bto\b/i.test(action.target) ||
+    action.objectType.toLocaleLowerCase().includes('relation')
   );
 }
 

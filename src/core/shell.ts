@@ -565,6 +565,7 @@ export class AurousShell {
 
   private handleError(error: unknown): void {
     const classified = asAurousError(error, this.state?.lastRunId);
+    if (classified.runId && this.state) this.state.lastRunId = classified.runId;
     const code = classified.code;
     if (
       code.startsWith('AUR-SHELL') ||

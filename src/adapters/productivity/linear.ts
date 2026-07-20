@@ -3,9 +3,14 @@ import type { ProductivityAdapter } from './types.js';
 import type { DestinationCandidate, ResolvedDestination } from '../../domain/destinations.js';
 import type { PlanProposal } from '../../domain/schemas.js';
 import {
-  canonicalExactObject,
   exactBindingWarnings,
+  normalizeNullishProperties,
+  normalizeRelationAction,
   normalizedObjectType,
+  propertyValue,
+  resolveExactObject,
+  setProperty,
+  stampExactExternalId,
 } from './exact-bindings.js';
 
 export class LinearAdapter implements ProductivityAdapter {
@@ -20,7 +25,7 @@ export class LinearAdapter implements ProductivityAdapter {
     unavailableMessage:
       'Aurous cannot access a Linear team yet; ask a workspace admin to grant the connected account access, then try again.',
     recoveryMessage: 'Ask a Linear workspace admin to give the connected account access to a team.',
-    discoveryInstructions: `Use only the official Linear MCP and perform read-only calls. Discover every accessible team and preserve each exact team ID and friendly name. For each team, inspect matching projects, milestones, labels, and issues relevant to the supplied project name and objective. Mark an existingAurousMatch only when an exact object inspection supports it. Never create, update, archive, or delete anything.`,
+    discoveryInstructions: `Use only the official Linear MCP and perform read-only calls. Discover every accessible team and preserve each exact team ID and friendly name. For each team, inspect matching projects, milestones, labels, and issues relevant to the supplied project name and objective. For issues, prefer the exact Linear issue UUID as existingObjects[].id when the MCP returns it; keep the human-readable identifier such as JAS-17 only as display metadata in the name or a note. Mark an existingAurousMatch only when an exact object inspection supports it. Never create, update, archive, or delete anything.`,
   } as const;
 
   rankDestinationCandidates(candidates: DestinationCandidate[]): DestinationCandidate[] {
@@ -31,41 +36,58 @@ export class LinearAdapter implements ProductivityAdapter {
   }
 
   destinationPlanningInstructions(destination: ResolvedDestination): string {
-    return `The exact approved Linear team ID is ${JSON.stringify(destination.id)} (${destination.name}). Put linear.teamId=${JSON.stringify(destination.id)} and linear.team=${JSON.stringify(destination.name)} on every action. Existing projects, milestones, labels, and issues may be reused only by exact IDs from the discovery snapshot. When an issue belongs to an inspected existing project, include both linear.project (friendly display name) and linear.projectId (its exact discovered ID). Likewise pair existing milestone and label names with linear.milestoneId and linear.labelIds. Exact IDs authorize relationships and reuse; names never do.`;
+    return `The exact approved Linear team ID is ${JSON.stringify(destination.id)} (${destination.name}). Put linear.teamId=${JSON.stringify(destination.id)} and linear.team=${JSON.stringify(destination.name)} on every action. Existing projects, milestones, labels, and issues may be reused only by exact IDs from the discovery snapshot. When reusing an issue, set linear.dedupe.knownExternalId (or linear.issueId) to the exact discovered issue external ID—not only the human-readable key. You may keep linear.issueKey / the issue identifier as display metadata. When an issue belongs to an inspected existing project, include both linear.project (friendly display name) and linear.projectId (its exact discovered ID). Likewise pair existing milestone and label names with linear.milestoneId and linear.labelIds. Exact IDs authorize relationships and reuse; names and issue keys alone never do.`;
   }
 
   bindDestination(proposal: PlanProposal, destination: ResolvedDestination): PlanProposal {
     return {
       ...proposal,
       plannedActions: proposal.plannedActions.map((action) => {
-        const existing = canonicalExactObject(destination, action);
-        const properties = action.properties.filter((property) => {
-          if (property.key === 'linear.team' || property.key === 'linear.teamId') return false;
-          if (property.key === 'linear.dedupe.identitySource') return false;
-          if (
-            existing &&
-            (property.key === 'linear.dedupe.knownExternalId' ||
-              property.key === 'linear.dedupe.knownUrl')
-          )
-            return false;
-          return true;
-        });
+        const normalized = normalizeRelationAction(action, 'linear');
+        const projectId = propertyValue(normalized.properties, 'linear.projectId');
+        const existing = resolveExactObject(
+          destination,
+          normalized,
+          'linear',
+          projectId ?? undefined,
+        );
+        const properties = normalizeNullishProperties(
+          normalized.properties.filter((property) => {
+            if (property.key === 'linear.team' || property.key === 'linear.teamId') return false;
+            if (property.key === 'linear.dedupe.identitySource') return false;
+            if (
+              existing &&
+              (property.key === 'linear.dedupe.knownExternalId' ||
+                property.key === 'linear.dedupe.knownUrl')
+            )
+              return false;
+            return true;
+          }),
+        );
         properties.push(
           { key: 'linear.team', value: destination.name },
           { key: 'linear.teamId', value: destination.id },
         );
+        let bound = { ...normalized, properties };
         if (existing) {
-          properties.push({ key: 'linear.dedupe.knownExternalId', value: existing.id });
-          if (existing.url) properties.push({ key: 'linear.dedupe.knownUrl', value: existing.url });
+          bound = stampExactExternalId(bound, existing, 'linear', 'Reuse');
+          const issueKey = propertyValue(action.properties, [
+            'linear.issueKey',
+            'linear.issueId',
+            'issueId',
+          ]);
+          if (issueKey && /^[A-Z][A-Z0-9]+-\d+$/i.test(issueKey) && issueKey !== existing.id) {
+            setProperty(bound.properties, 'linear.issueKey', issueKey);
+          } else if (
+            /^[A-Z][A-Z0-9]+-\d+$/i.test(existing.id) &&
+            !propertyValue(bound.properties, 'linear.issueKey')
+          ) {
+            setProperty(bound.properties, 'linear.issueKey', existing.id);
+          }
+          setProperty(bound.properties, 'linear.issueId', existing.id);
         }
-        bindLinearRelationshipIds(properties, destination);
-        return {
-          ...action,
-          description: existing
-            ? `Reuse the exact verified existing ${action.objectType} ${JSON.stringify(existing.name)} when compatible. ${action.description}`
-            : action.description,
-          properties,
-        };
+        bindLinearRelationshipIds(bound.properties, destination);
+        return bound;
       }),
       assumptions: [
         ...proposal.assumptions,
@@ -143,21 +165,4 @@ function bindSingleRelationship(
     .filter((object) => normalizedObjectType(object.type) === type && object.name === name)
     .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
   if (matches[0]) setProperty(properties, `linear.${type}Id`, matches[0].id);
-}
-
-function propertyValue(
-  properties: PlanProposal['plannedActions'][number]['properties'],
-  keys: string[],
-): string | undefined {
-  return properties.find((property) => keys.includes(property.key))?.value;
-}
-
-function setProperty(
-  properties: PlanProposal['plannedActions'][number]['properties'],
-  key: string,
-  value: string,
-): void {
-  const existing = properties.find((property) => property.key === key);
-  if (existing) existing.value = value;
-  else properties.push({ key, value });
 }

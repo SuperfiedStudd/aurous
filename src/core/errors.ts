@@ -52,7 +52,18 @@ export class AurousCommandError extends AurousError {
 }
 
 export function asAurousError(error: unknown, runId?: string): AurousError {
-  if (error instanceof AurousError) return error;
+  if (error instanceof AurousError) {
+    if (!runId || error.runId) return error;
+    return new AurousError({
+      code: error.code,
+      summary: error.message,
+      probableCause: error.probableCause,
+      nextAction: error.nextAction,
+      severity: error.severity,
+      runId,
+      cause: error.cause,
+    });
+  }
   return new AurousError({
     code: 'AUR-CORE-001',
     summary: error instanceof Error ? error.message : 'An unexpected error occurred.',

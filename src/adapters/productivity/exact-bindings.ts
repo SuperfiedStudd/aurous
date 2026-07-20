@@ -1,5 +1,8 @@
-import type { ResolvedDestination } from '../../domain/destinations.js';
+import type { DiscoveredObject, ResolvedDestination } from '../../domain/destinations.js';
 import type { PlanAction, ToolName } from '../../domain/schemas.js';
+import { AurousError } from '../../core/errors.js';
+
+export type ExactBindingNamespace = 'airtable' | 'linear' | 'notion' | 'trello' | 'mock';
 
 export function exactObjectMatches(
   destination: ResolvedDestination,
@@ -24,6 +27,165 @@ export function canonicalExactObject(
   parentId?: string,
 ) {
   return exactObjectMatches(destination, action, tool, parentId)[0];
+}
+
+/**
+ * Resolve an inspected object for reuse/update/link using, in order:
+ * 1. persisted exact external ID
+ * 2. freshly discovered exact ID from structured action properties
+ * 3. exact parent-scoped normalized name / identifier match
+ * Ambiguous matches throw; no match returns undefined (create path or later AUR-PLAN-009).
+ */
+export function resolveExactObject(
+  destination: ResolvedDestination,
+  action: PlanAction,
+  tool: ToolName = destination.integration,
+  parentId?: string,
+): DiscoveredObject | undefined {
+  const namespace = bindingNamespace(tool);
+  const persisted = propertyValue(action.properties, `${namespace}.dedupe.knownExternalId`);
+  if (persisted) {
+    const exact = destination.existingObjects.find((object) => object.id === persisted);
+    if (
+      exact &&
+      exactObjectTypeMatches(tool, exact.type, action.objectType) &&
+      (parentId === undefined || (exact.parentId ?? destination.id) === parentId)
+    ) {
+      return exact;
+    }
+  }
+
+  const structuredIds = structuredCandidateIds(action, tool);
+  const byStructuredId = uniqueObjects(
+    structuredIds
+      .map((id) => destination.existingObjects.find((object) => object.id === id))
+      .filter((object): object is DiscoveredObject => Boolean(object))
+      .filter(
+        (object) =>
+          exactObjectTypeMatches(tool, object.type, action.objectType) &&
+          (parentId === undefined || (object.parentId ?? destination.id) === parentId),
+      ),
+  );
+  if (byStructuredId.length > 1) {
+    throw ambiguousExactBindingError(action, byStructuredId);
+  }
+  if (byStructuredId[0]) return byStructuredId[0];
+
+  const lookupNames = candidateLookupNames(action, tool);
+  const byName = uniqueObjects(
+    lookupNames.flatMap((name) =>
+      exactObjectMatches(
+        destination,
+        { objectType: action.objectType, target: name },
+        tool,
+        parentId,
+      ),
+    ),
+  );
+  if (byName.length > 1) {
+    const parentKeys = new Set(byName.map((object) => object.parentId ?? destination.id));
+    if (parentKeys.size > 1 && parentId === undefined)
+      throw ambiguousExactBindingError(action, byName);
+  }
+  if (byName[0]) return byName[0];
+
+  if (tool === 'linear') {
+    const issueKeys = candidateIssueKeys(action);
+    const byKey = uniqueObjects(
+      issueKeys
+        .map((key) => destination.existingObjects.find((object) => object.id === key))
+        .filter((object): object is DiscoveredObject => Boolean(object))
+        .filter(
+          (object) =>
+            exactObjectTypeMatches(tool, object.type, action.objectType) &&
+            (parentId === undefined || (object.parentId ?? destination.id) === parentId),
+        ),
+    );
+    if (byKey.length > 1) {
+      const parentKeys = new Set(byKey.map((object) => object.parentId ?? destination.id));
+      if (parentKeys.size > 1 && parentId === undefined)
+        throw ambiguousExactBindingError(action, byKey);
+    }
+    if (byKey[0]) return byKey[0];
+  }
+
+  return undefined;
+}
+
+export function stampExactExternalId(
+  action: PlanAction,
+  existing: DiscoveredObject,
+  namespace: ExactBindingNamespace,
+  reuseVerb = 'Reuse or reconcile',
+): PlanAction {
+  const properties = action.properties.filter(
+    (property) =>
+      property.key !== `${namespace}.dedupe.knownExternalId` &&
+      property.key !== `${namespace}.dedupe.knownUrl`,
+  );
+  properties.push({ key: `${namespace}.dedupe.knownExternalId`, value: existing.id });
+  if (existing.url) properties.push({ key: `${namespace}.dedupe.knownUrl`, value: existing.url });
+  return {
+    ...action,
+    target: existing.name,
+    description: action.description.startsWith(reuseVerb)
+      ? action.description
+      : `${reuseVerb} the exact verified existing ${action.objectType} ${JSON.stringify(existing.name)}. ${action.description}`,
+    properties,
+  };
+}
+
+export function normalizeNullishProperties(
+  properties: PlanAction['properties'],
+): PlanAction['properties'] {
+  return properties.filter((property) => !isNullishPropertyValue(property.value));
+}
+
+export function isNullishPropertyValue(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed === '' || trimmed === 'null' || trimmed === 'undefined';
+}
+
+export function propertyValue(
+  properties: PlanAction['properties'] | { key: string; value: string }[],
+  keys: string | string[],
+): string | undefined {
+  const wanted = Array.isArray(keys) ? keys : [keys];
+  return properties.find((property) => wanted.includes(property.key))?.value;
+}
+
+export function setProperty(
+  properties: PlanAction['properties'],
+  key: string,
+  value: string,
+): void {
+  const existing = properties.find((property) => property.key === key);
+  if (existing) existing.value = value;
+  else properties.push({ key, value });
+}
+
+export function bindingNamespace(tool: ToolName): ExactBindingNamespace {
+  if (tool === 'airtable') return 'airtable';
+  if (tool === 'linear') return 'linear';
+  if (tool === 'notion') return 'notion';
+  if (tool === 'trello') return 'trello';
+  return 'mock';
+}
+
+export function normalizeRelationAction(action: PlanAction, tool: ToolName): PlanAction {
+  if (tool === 'notion') return normalizeNotionRelationAction(action);
+  if (tool === 'airtable') return normalizeAirtableRelationAction(action);
+  if (tool === 'linear') {
+    return {
+      ...action,
+      properties: normalizeNullishProperties(action.properties),
+    };
+  }
+  return action;
+}
+
+export function isSyntheticRelationshipTarget(target: string): boolean {
+  return /\blink\b.+\bto\b/i.test(target) || /\bexisting\b.+\band\b.+\bexisting\b/i.test(target);
 }
 
 export function exactBindingWarnings(
@@ -66,10 +228,13 @@ export function normalizedObjectType(type: string): string {
     .trim()
     .toLocaleLowerCase()
     .replace(/[\s-]+/g, '_');
-  const unprefixed = normalized.replace(/^(?:airtable|trello)[_.]/, '');
+  const unprefixed = normalized.replace(/^(?:airtable|linear|notion|trello)[_.]/, '');
   if (unprefixed === 'issue_label') return 'label';
   if (unprefixed === 'data_source') return 'database';
   if (unprefixed === 'records') return 'record';
+  if (unprefixed === 'database_record_relation' || unprefixed === 'record_relation') {
+    return 'database_record';
+  }
   if (unprefixed === 'boards') return 'board';
   if (unprefixed === 'lists') return 'list';
   if (unprefixed === 'cards') return 'card';
@@ -88,6 +253,153 @@ export function exactObjectTypeMatches(
   const planned = normalizedObjectType(actionType);
   if (discovered === planned) return true;
   return tool === 'notion' && discovered === 'page' && planned === 'database_record';
+}
+
+function normalizeNotionRelationAction(action: PlanAction): PlanAction {
+  const kind = normalizedObjectType(action.objectType);
+  const sourceId =
+    propertyValue(action.properties, 'notion.relation.sourceRecordId') ??
+    propertyValue(action.properties, 'notion.dedupe.knownExternalId');
+  const targetId =
+    propertyValue(action.properties, 'notion.relation.targetRecordId') ??
+    propertyValue(action.properties, 'notion.relation.targetRecordIds');
+  const isRelationShape =
+    action.objectType.toLocaleLowerCase().includes('relation') ||
+    (Boolean(sourceId) && Boolean(propertyValue(action.properties, 'notion.relation.name')));
+  if (!isRelationShape && kind !== 'database_record') return action;
+  if (!sourceId) return action;
+
+  const properties = action.properties.filter(
+    (property) =>
+      property.key !== 'notion.relation.targetRecordId' &&
+      property.key !== 'notion.relation.targetRecordIds' &&
+      property.key !== 'notion.relation.sourceRecordId',
+  );
+  properties.push({ key: 'notion.relation.sourceRecordId', value: sourceId });
+  if (targetId) {
+    const parsed = parseStringOrJsonArray(targetId);
+    properties.push({
+      key: 'notion.relation.targetRecordIds',
+      value: JSON.stringify(parsed),
+    });
+  }
+  return {
+    ...action,
+    operation: action.operation === 'create' ? 'update' : action.operation,
+    objectType: 'notion.database_record',
+    properties,
+  };
+}
+
+function normalizeAirtableRelationAction(action: PlanAction): PlanAction {
+  const recordId = propertyValue(action.properties, 'airtable.recordId');
+  if (!recordId) return action;
+  if (action.operation === 'link' || isSyntheticRelationshipTarget(action.target)) {
+    return {
+      ...action,
+      operation: action.operation === 'create' ? 'update' : action.operation,
+      objectType: 'airtable.record',
+    };
+  }
+  return action;
+}
+
+function structuredCandidateIds(action: PlanAction, tool: ToolName): string[] {
+  if (tool === 'airtable') {
+    return compact([propertyValue(action.properties, 'airtable.recordId')]);
+  }
+  if (tool === 'linear') {
+    return compact([propertyValue(action.properties, ['linear.issueId', 'issueId'])]);
+  }
+  if (tool === 'notion') {
+    return compact([
+      propertyValue(action.properties, 'notion.relation.sourceRecordId'),
+      propertyValue(action.properties, 'notion.pageId'),
+      propertyValue(action.properties, 'notion.recordId'),
+    ]);
+  }
+  if (tool === 'trello') {
+    return compact([
+      propertyValue(action.properties, 'trello.cardId'),
+      propertyValue(action.properties, 'trello.listId'),
+      propertyValue(action.properties, 'trello.boardId'),
+      propertyValue(action.properties, 'trello.checklistId'),
+    ]);
+  }
+  return [];
+}
+
+function candidateLookupNames(action: PlanAction, tool: ToolName): string[] {
+  const names = [action.target];
+  if (tool === 'linear') {
+    names.push(
+      ...compact([
+        propertyValue(action.properties, ['linear.title', 'title']),
+        propertyValue(action.properties, ['linear.name', 'name']),
+      ]),
+    );
+  }
+  if (tool === 'airtable') {
+    names.push(...compact([propertyValue(action.properties, 'airtable.recordName')]));
+  }
+  if (tool === 'notion') {
+    names.push(
+      ...compact([
+        propertyValue(action.properties, 'notion.property.Title'),
+        propertyValue(action.properties, 'notion.property.Name'),
+      ]),
+    );
+  }
+  return [...new Set(names.filter((name) => name && !isSyntheticRelationshipTarget(name)))];
+}
+
+function candidateIssueKeys(action: PlanAction): string[] {
+  return compact([
+    action.target,
+    propertyValue(action.properties, ['linear.issueId', 'issueId']),
+    propertyValue(action.properties, ['linear.issueKey', 'issueKey', 'linear.identifier']),
+  ]).filter(looksLikeIssueKey);
+}
+
+function looksLikeIssueKey(value: string): boolean {
+  return /^[A-Z][A-Z0-9]+-\d+$/i.test(value.trim());
+}
+
+function parseStringOrJsonArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) return parsed;
+  } catch {
+    // Single ID string.
+  }
+  return [value];
+}
+
+function uniqueObjects(objects: DiscoveredObject[]): DiscoveredObject[] {
+  const seen = new Set<string>();
+  const unique: DiscoveredObject[] = [];
+  for (const object of objects) {
+    if (seen.has(object.id)) continue;
+    seen.add(object.id);
+    unique.push(object);
+  }
+  return unique.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+}
+
+function compact(values: Array<string | undefined>): string[] {
+  return values.filter((value): value is string =>
+    Boolean(value && !isNullishPropertyValue(value)),
+  );
+}
+
+function ambiguousExactBindingError(action: PlanAction, matches: DiscoveredObject[]): AurousError {
+  return new AurousError({
+    code: 'AUR-PLAN-010',
+    summary: `Action ${action.id} matched ${matches.length} inspected objects for ${action.objectType} ${JSON.stringify(action.target)}; exact binding is ambiguous.`,
+    probableCause: 'Parent-scoped discovery found more than one compatible exact object.',
+    nextAction:
+      'No writes were attempted. Narrow the parent scope or authorize one exact external ID.',
+  });
 }
 
 function normalizedName(name: string): string {
