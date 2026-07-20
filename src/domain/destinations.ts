@@ -23,7 +23,11 @@ export type DestinationCandidate = z.infer<typeof DestinationCandidateSchema>;
 
 export const DiscoveredObjectSchema = z.object({
   id: z.string().min(1),
-  name: z.string().min(1),
+  name: z.preprocess((value) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : '(unnamed)';
+  }, z.string().min(1)),
   type: z.string().min(1),
   destinationId: z.string().min(1),
   url: z.string().url().nullish(),
