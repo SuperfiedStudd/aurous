@@ -15,6 +15,7 @@ import type {
   ResolvedDestination,
   SanitizedDiscoveryTrace,
 } from '../../domain/destinations.js';
+import type { ContextPack } from '../../domain/destinations.js';
 
 export type Readiness = 'ready' | 'not-ready' | 'unknown';
 
@@ -44,6 +45,7 @@ export interface PlanGenerationInput {
   runDirectory: string;
   objective: string;
   context: ContextBundle;
+  contextPack: ContextPack;
   productivity: ProductivityAdapter;
   destination: ResolvedDestination;
   timeoutMs: number;
@@ -58,6 +60,7 @@ export interface DestinationDiscoveryInput {
   objective: string;
   projectName: string;
   context: ContextBundle;
+  contextPack: ContextPack;
   productivity: ProductivityAdapter;
   timeoutMs: number;
   model?: string;

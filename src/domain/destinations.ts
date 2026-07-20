@@ -87,22 +87,29 @@ export const ContextPackSchema = z.object({
     name: z.string().min(1),
     root: z.string().min(1),
     summary: z.string().optional(),
+    purpose: z.string().optional(),
+    currentObjective: z.string().optional(),
+    technology: z.array(z.string().min(1)).max(20).default([]),
+    commands: z.array(z.string().min(1)).max(20).default([]),
     summaryProvenance: z
       .object({
         kind: z.literal('repository-files'),
         sources: z.array(z.string().min(1)).max(5),
         generatedAt: z.string().datetime(),
         maxSourceBytes: z.number().int().positive(),
+        maxSources: z.number().int().positive().default(5),
       })
       .optional(),
   }),
   selectedPreset: z.string().optional(),
   selectedPresetSource: z.literal('explicit-user').optional(),
-  activeIntegrations: z.array(ToolNameSchema),
-  destinations: z.array(ResolvedDestinationSchema),
-  workspacePreferences: z.object({
-    verbose: z.boolean().default(false),
-  }),
+  activeIntegrations: z.array(ToolNameSchema).default([]),
+  destinations: z.array(ResolvedDestinationSchema).default([]),
+  workspacePreferences: z
+    .object({
+      verbose: z.boolean().default(false),
+    })
+    .default({ verbose: false }),
   updatedAt: z.string().datetime(),
 });
 export type ContextPack = z.infer<typeof ContextPackSchema>;

@@ -221,6 +221,7 @@ export class AurousServices {
       cwd: projectRoot,
       paths: options.contextPaths,
     });
+    const contextPack = await new ContextPackStore(projectRoot).loadOrCreate(options.preset);
     if (!options.embedded)
       this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
 
@@ -230,6 +231,7 @@ export class AurousServices {
       adapter,
       productivity,
       context,
+      contextPack,
       objective,
       timeoutMs: options.timeoutMs ?? config.timeoutMs,
       ...(options.model ? { model: options.model } : {}),
@@ -267,6 +269,7 @@ export class AurousServices {
           runDirectory: this.dependencies.store.runDirectory(runId),
           objective,
           context,
+          contextPack,
           productivity,
           destination,
           timeoutMs: options.timeoutMs ?? config.timeoutMs,
@@ -545,6 +548,7 @@ export class AurousServices {
     adapter: AgentAdapter;
     productivity: ReturnType<typeof createProductivityAdapter>;
     context: Awaited<ReturnType<typeof ingestContext>>;
+    contextPack?: import('../domain/destinations.js').ContextPack;
     objective: string;
     timeoutMs: number;
     model?: string;
@@ -583,6 +587,7 @@ export class AurousServices {
       objective: input.objective,
       projectName: pack.project.name,
       context: input.context,
+      contextPack: input.contextPack ?? pack,
       productivity: input.productivity,
       timeoutMs: input.timeoutMs,
       ...(input.model ? { model: input.model } : {}),

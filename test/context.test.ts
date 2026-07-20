@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ingestContext } from '../src/core/context.js';
-import { findProjectRoot } from '../src/core/context-pack.js';
+import {
+  ContextPackStore,
+  findProjectRoot,
+  renderContextPackMarkdown,
+} from '../src/core/context-pack.js';
 
 describe('ingestContext', () => {
   it('reads only selected safe project context and reports exclusions', async () => {
@@ -76,5 +80,38 @@ describe('ingestContext', () => {
     await expect(ingestContext({ cwd, paths: ['missing'] })).rejects.toMatchObject({
       code: 'AUR-CTX-002',
     });
+  });
+
+  it('refreshes bounded, deterministic project context and exports prompt-ready safe files', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'aurous-context-pack-v1-'));
+    await writeFile(
+      path.join(root, 'README.md'),
+      '# Demo\n\nA compact project summary with API_KEY=should-not-export.\n',
+    );
+    await writeFile(
+      path.join(root, 'package.json'),
+      JSON.stringify({
+        name: 'demo',
+        description: 'A TypeScript demo.',
+        scripts: { check: 'vitest run', build: 'tsc' },
+        devDependencies: { typescript: '1', vitest: '1' },
+      }),
+    );
+    await mkdir(path.join(root, 'node_modules'), { recursive: true });
+    await writeFile(path.join(root, 'node_modules', 'ignored.md'), 'unbounded secret content');
+    const store = new ContextPackStore(root);
+    const first = await store.loadOrCreate();
+    const refreshed = await store.refresh();
+    expect(refreshed.project.technology).toEqual(['TypeScript', 'Vitest']);
+    expect(refreshed.project.commands).toEqual(['npm run build', 'npm run check']);
+    expect(refreshed.project.summary).not.toContain('should-not-export');
+    expect(refreshed.destinations).toEqual(first.destinations);
+    const exported = await store.export();
+    const markdown = await readFile(exported.markdownPath, 'utf8');
+    const json = await readFile(exported.jsonPath, 'utf8');
+    expect(markdown).toContain('does not authorize writes');
+    expect(markdown).not.toContain('should-not-export');
+    expect(json).not.toContain('unbounded secret content');
+    expect(renderContextPackMarkdown(exported.pack)).toBe(markdown);
   });
 });

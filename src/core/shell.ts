@@ -291,6 +291,20 @@ export class AurousShell {
       );
       return;
     }
+    if (subcommand === 'refresh') {
+      const pack = await this.contextStore().refresh();
+      this.setReady(
+        `Refreshed bounded project context · ${pack.project.summaryProvenance?.sources.length ?? 0} sources.`,
+      );
+      return;
+    }
+    if (subcommand === 'export') {
+      const exported = await this.contextStore().export();
+      this.setReady(
+        `Exported prompt-ready context to ${exported.markdownPath} and ${exported.jsonPath}.`,
+      );
+      return;
+    }
     if (subcommand === 'forget') {
       const parsed = ToolNameSchema.safeParse(args[1]?.toLowerCase());
       if (!parsed.success) throw shellInputError('context', 'Use /context forget notion|linear.');

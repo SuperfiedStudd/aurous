@@ -10,6 +10,7 @@ import { AurousShell, createReadlineShellTerminal } from './core/shell.js';
 import { DynamicShellRenderer, type ShellTerminal } from './core/shell-renderer.js';
 import type { DestinationChoiceRequest } from './core/destination-resolver.js';
 import { findProjectRoot } from './core/context-pack.js';
+import { ContextPackStore, detectProjectRoot } from './core/context-pack.js';
 
 export interface CliDependencies {
   cwd?: string;
@@ -88,6 +89,35 @@ export function createCli(dependencies: CliDependencies = {}): Command {
     .action(async (options: { verbose?: boolean }) => {
       await services.doctor(Boolean(options.verbose));
     });
+
+  const contextCommand = program
+    .command('context')
+    .description('Inspect, refresh, or export the safe project Context Pack v1.');
+  contextCommand.command('show').action(async () => {
+    const pack = await new ContextPackStore(await detectProjectRoot(cwd)).loadOrCreate();
+    cliOutput.log(JSON.stringify(pack, null, 2));
+  });
+  contextCommand.command('destinations').action(async () => {
+    const pack = await new ContextPackStore(await detectProjectRoot(cwd)).loadOrCreate();
+    cliOutput.log(JSON.stringify(pack.destinations, null, 2));
+  });
+  contextCommand.command('refresh').action(async () => {
+    const pack = await new ContextPackStore(await detectProjectRoot(cwd)).refresh();
+    cliOutput.log(`Refreshed Context Pack v1 at ${pack.updatedAt}`);
+  });
+  contextCommand.command('export').action(async () => {
+    const exported = await new ContextPackStore(await detectProjectRoot(cwd)).export();
+    cliOutput.log(`Exported ${exported.markdownPath}`);
+    cliOutput.log(`Exported ${exported.jsonPath}`);
+  });
+  contextCommand.command('forget <integration>').action(async (integration: string) => {
+    const pack = await new ContextPackStore(await detectProjectRoot(cwd)).forgetDestination(
+      ToolNameSchema.parse(integration),
+    );
+    cliOutput.log(
+      `Forgot ${integration}; active integrations: ${pack.activeIntegrations.join(', ') || 'none'}`,
+    );
+  });
 
   program
     .command('plan')

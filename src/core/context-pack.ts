@@ -25,7 +25,7 @@ export class ContextPackStore {
         current.project.summaryProvenance
       )
         return current;
-      const project = await readProjectSummary(this.projectRoot);
+      const project = await collectProjectContext(this.projectRoot);
       if (!project.summary) return current;
       const next = ContextPackSchema.parse({
         ...current,
@@ -43,7 +43,7 @@ export class ContextPackStore {
       project: {
         name: path.basename(this.projectRoot),
         root: this.projectRoot,
-        ...(await readProjectSummary(this.projectRoot)),
+        ...(await collectProjectContext(this.projectRoot)),
       },
       ...(selectedPreset ? { selectedPreset, selectedPresetSource: 'explicit-user' as const } : {}),
       activeIntegrations: [],
@@ -124,13 +124,62 @@ export class ContextPackStore {
     return next;
   }
 
-  private async save(pack: ContextPack): Promise<void> {
-    await mkdir(path.dirname(this.path), { recursive: true, mode: 0o700 });
-    const temporary = `${this.path}.${process.pid}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(ContextPackSchema.parse(pack), null, 2)}\n`, {
+  /** Rebuild only bounded project-local context. Saved exact destinations and preferences remain intact. */
+  async refresh(): Promise<ContextPack> {
+    const current = await this.loadOrCreate();
+    const project = await collectProjectContext(this.projectRoot);
+    const next = ContextPackSchema.parse({
+      ...current,
+      project: { ...current.project, ...project },
+      destinations: stableDestinations(current.destinations),
+      activeIntegrations: [...new Set(current.activeIntegrations)].sort(),
+      updatedAt: new Date().toISOString(),
+    });
+    await this.save(next);
+    return next;
+  }
+
+  async export(): Promise<{ markdownPath: string; jsonPath: string; pack: ContextPack }> {
+    const pack = await this.loadOrCreate();
+    const exportsDirectory = path.join(this.projectRoot, '.aurous', 'exports');
+    const markdownPath = path.join(exportsDirectory, 'context-pack.md');
+    const jsonPath = path.join(exportsDirectory, 'context-pack.json');
+    const normalized = ContextPackSchema.parse({
+      ...pack,
+      activeIntegrations: [...new Set(pack.activeIntegrations)].sort(),
+      destinations: stableDestinations(pack.destinations),
+    });
+    await mkdir(exportsDirectory, { recursive: true, mode: 0o700 });
+    await writeFile(jsonPath, `${JSON.stringify(normalized, null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
     });
+    await writeFile(markdownPath, renderContextPackMarkdown(normalized), {
+      encoding: 'utf8',
+      mode: 0o600,
+    });
+    return { markdownPath, jsonPath, pack: normalized };
+  }
+
+  private async save(pack: ContextPack): Promise<void> {
+    await mkdir(path.dirname(this.path), { recursive: true, mode: 0o700 });
+    const temporary = `${this.path}.${process.pid}.tmp`;
+    await writeFile(
+      temporary,
+      `${JSON.stringify(
+        ContextPackSchema.parse({
+          ...pack,
+          activeIntegrations: [...new Set(pack.activeIntegrations)].sort(),
+          destinations: stableDestinations(pack.destinations),
+        }),
+        null,
+        2,
+      )}\n`,
+      {
+        encoding: 'utf8',
+        mode: 0o600,
+      },
+    );
     await rename(temporary, this.path);
   }
 }
@@ -182,13 +231,18 @@ async function exists(target: string): Promise<boolean> {
 
 const MAX_SUMMARY_SOURCE_BYTES = 16 * 1024;
 
-async function readProjectSummary(root: string): Promise<{
+export async function collectProjectContext(root: string): Promise<{
   summary?: string;
+  purpose?: string;
+  currentObjective?: string;
+  technology: string[];
+  commands: string[];
   summaryProvenance?: {
     kind: 'repository-files';
     sources: string[];
     generatedAt: string;
     maxSourceBytes: number;
+    maxSources: number;
   };
 }> {
   const sources: string[] = [];
@@ -204,29 +258,146 @@ async function readProjectSummary(root: string): Promise<{
     }
   }
   let packageSummary: string | undefined;
+  let technology: string[] = [];
+  let commands: string[] = [];
   const packageText = await readBoundedText(path.join(root, 'package.json'));
   if (packageText) {
     try {
-      const manifest = JSON.parse(packageText) as { description?: unknown };
+      const manifest = JSON.parse(packageText) as {
+        description?: unknown;
+        scripts?: Record<string, unknown>;
+        dependencies?: Record<string, unknown>;
+        devDependencies?: Record<string, unknown>;
+      };
       if (typeof manifest.description === 'string' && manifest.description.trim()) {
         packageSummary = manifest.description.trim();
         sources.push('package.json');
       }
+      commands = Object.entries(manifest.scripts ?? {})
+        .filter(([, value]) => typeof value === 'string')
+        .map(([name]) => `npm run ${name}`)
+        .sort()
+        .slice(0, 20);
+      const dependencyNames = Object.keys({
+        ...(manifest.dependencies ?? {}),
+        ...(manifest.devDependencies ?? {}),
+      });
+      technology = detectTechnology(dependencyNames).sort().slice(0, 20);
     } catch {
       // A malformed manifest is not useful summary provenance.
     }
   }
-  const summary = (readmeSummary ?? packageSummary)?.replace(/\s+/g, ' ').trim().slice(0, 700);
-  if (!summary) return {};
+  const summary = sanitizeText(
+    (readmeSummary ?? packageSummary)?.replace(/\s+/g, ' ').trim().slice(0, 700),
+  );
+  const purpose = summary;
+  const objective = await readCurrentObjective(root);
+  if (!summary && technology.length === 0 && commands.length === 0) return { technology, commands };
   return {
-    summary,
+    ...(summary ? { summary } : {}),
+    ...(purpose ? { purpose } : {}),
+    ...(objective ? { currentObjective: objective } : {}),
+    technology,
+    commands,
     summaryProvenance: {
       kind: 'repository-files',
-      sources: [...new Set(sources)],
+      sources: [...new Set(sources)].sort().slice(0, 5),
       generatedAt: new Date().toISOString(),
       maxSourceBytes: MAX_SUMMARY_SOURCE_BYTES,
+      maxSources: 5,
     },
   };
+}
+
+async function readCurrentObjective(root: string): Promise<string | undefined> {
+  for (const file of ['ROADMAP.md', 'docs/DEVELOPMENT.md', 'ARCHITECTURE.md']) {
+    const content = await readBoundedText(path.join(root, file));
+    const objective = content && firstUsefulParagraph(content);
+    if (objective) return sanitizeText(objective.slice(0, 500));
+  }
+  return undefined;
+}
+
+function detectTechnology(names: string[]): string[] {
+  const output = new Set<string>();
+  if (names.some((name) => /typescript/.test(name))) output.add('TypeScript');
+  if (names.some((name) => /^react$|react-/.test(name))) output.add('React');
+  if (names.some((name) => /vitest/.test(name))) output.add('Vitest');
+  if (names.some((name) => /eslint/.test(name))) output.add('ESLint');
+  if (names.some((name) => /zod/.test(name))) output.add('Zod');
+  return [...output];
+}
+
+function sanitizeText(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  return value
+    .replace(
+      /(?:api[_ -]?key|token|secret|password|authorization|cookie)\s*[:=]\s*\S+/gi,
+      '[redacted]',
+    )
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function stableDestinations(
+  destinations: ContextPack['destinations'],
+): ContextPack['destinations'] {
+  return [...destinations].sort(
+    (a, b) =>
+      a.integration.localeCompare(b.integration) ||
+      a.name.localeCompare(b.name) ||
+      a.id.localeCompare(b.id),
+  );
+}
+
+export function renderContextPackMarkdown(pack: ContextPack): string {
+  const destinations = stableDestinations(pack.destinations);
+  const lines = [
+    '# Aurous Context Pack v1',
+    '',
+    `Generated: ${pack.updatedAt}`,
+    '',
+    '## Project overview',
+    '',
+    `- Name: ${pack.project.name}`,
+    `- Root: ${pack.project.root}`,
+    `- Summary: ${pack.project.summary ?? 'Not available.'}`,
+    `- Purpose: ${pack.project.purpose ?? 'Not available.'}`,
+    `- Current objective: ${pack.project.currentObjective ?? 'Not available.'}`,
+    '',
+    '## Architecture and commands',
+    '',
+    `- Technology: ${pack.project.technology.join(', ') || 'Not confidently detected.'}`,
+    `- Commands: ${pack.project.commands.join(', ') || 'Not confidently detected.'}`,
+    '',
+    '## Integration state',
+    '',
+    `- Active integrations: ${pack.activeIntegrations.join(', ') || 'None.'}`,
+    ...(destinations.length === 0
+      ? ['- No saved destinations.']
+      : destinations.flatMap((destination) => [
+          `- ${destination.integration}: ${destination.name} (${destination.kind})`,
+          `  - Exact ID: ${destination.id}`,
+          `  - URL: ${destination.url ?? 'Not returned'}`,
+          `  - Resolution: ${destination.source} — ${destination.sourceDetail}`,
+          `  - Verified: ${destination.verifiedAt}`,
+        ])),
+    '',
+    '## Workspace preferences',
+    '',
+    `- Verbose previews: ${pack.workspacePreferences.verbose ? 'yes' : 'no'}`,
+    `- Preset: ${pack.selectedPreset ?? 'None'}${pack.selectedPresetSource ? ` (${pack.selectedPresetSource})` : ''}`,
+    '',
+    '## Provenance and freshness',
+    '',
+    `- Sources: ${pack.project.summaryProvenance?.sources.join(', ') || 'None'}`,
+    `- Source byte limit: ${pack.project.summaryProvenance?.maxSourceBytes ?? 0}`,
+    `- Last refresh: ${pack.updatedAt}`,
+    '',
+    '> This export is descriptive project context only. It does not authorize writes to any integration.',
+    '',
+  ];
+  return lines.join('\n');
 }
 
 async function readBoundedText(target: string): Promise<string | undefined> {

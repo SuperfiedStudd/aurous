@@ -83,6 +83,7 @@ export class ClaudeAgentAdapter implements AgentAdapter {
     const prompt = buildPlanningPrompt(
       input.objective,
       input.context,
+      input.contextPack,
       input.productivity,
       input.destination,
     );

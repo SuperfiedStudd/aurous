@@ -6,6 +6,7 @@ import type {
   PlanAction,
 } from '../../domain/schemas.js';
 import type { ProductivityAdapter } from '../productivity/types.js';
+import type { ContextPack } from '../../domain/destinations.js';
 import type { RecoveryPlan } from '../../domain/recovery.js';
 import type { DestinationDiscoveryInput } from './types.js';
 import { formatIntentContract } from '../../core/intent.js';
@@ -34,6 +35,7 @@ ${input.productivity.destination.discoveryInstructions}
 Project: ${input.projectName}
 Objective: ${input.objective}
 Context summary: ${JSON.stringify(input.context.summary, null, 2)}
+Normalized reusable Context Pack v1: ${JSON.stringify(input.contextPack, null, 2)}
 Context documents:
 ${documents || '(No readable project documents.)'}
 
@@ -43,6 +45,7 @@ Set integration=${JSON.stringify(input.productivity.name)} and inspectedAt to th
 export function buildPlanningPrompt(
   objective: string,
   context: ContextBundle,
+  contextPack: ContextPack,
   productivity: ProductivityAdapter,
   destination: import('../../domain/destinations.js').ResolvedDestination,
 ): string {
@@ -81,6 +84,9 @@ ${JSON.stringify(destination, null, 2)}
 
 Approved context summary:
 ${JSON.stringify(context.summary, null, 2)}
+
+Normalized reusable Context Pack v1 (shared by every integration):
+${JSON.stringify(contextPack, null, 2)}
 
 Approved context documents:
 ${documents || '(No selected text files; infer only from the objective and summary.)'}
