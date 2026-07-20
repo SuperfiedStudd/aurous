@@ -8,6 +8,7 @@ import {
 import { createProductivityAdapter } from '../adapters/productivity/index.js';
 import {
   exactObjectTypeMatches,
+  isSyntheticRelationshipTarget,
   looksLikeIssueKey,
   normalizedObjectType,
 } from '../adapters/productivity/exact-bindings.js';
@@ -2321,18 +2322,13 @@ function exactRelationshipError(actionId: string, type: string): AurousError {
 function requiresExactExistingId(
   action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
 ): boolean {
-  return (
-    action.operation === 'update' ||
-    (action.operation === 'link' && requiresExactIdForLink(action)) ||
-    /\b(?:reuse|reconcile|skip)\b/i.test(action.description) ||
-    isSyntheticRelationshipCreate(action) ||
-    action.properties.some(
-      (property) =>
-        /\b(?:reuse|existing)\b/i.test(property.key) &&
-        !property.key.endsWith('.knownExternalId') &&
-        !property.key.endsWith('.knownUrl'),
-    )
-  );
+  // Classify mutation authorization only from structured fields (operation, object type,
+  // and exact-binding / relation shape). Never infer create vs reuse from description,
+  // title, target prose, or property values that merely explain future rerun policy.
+  if (action.operation === 'update') return true;
+  if (action.operation === 'link') return requiresExactIdForLink(action);
+  if (isSyntheticRelationshipCreate(action)) return true;
+  return hasStructuredExistingIdentityReference(action);
 }
 
 function requiresExactIdForLink(
@@ -2340,8 +2336,6 @@ function requiresExactIdForLink(
 ): boolean {
   if (hasTypedAirtableRelation(action)) return false;
   if (action.objectType.toLocaleLowerCase().includes('relation')) return true;
-  if (/\blink\b.+\bto\b/i.test(action.target)) return true;
-  if (/\bexisting\b.+\band\b.+\bexisting\b/i.test(action.target)) return true;
   return action.properties.some((property) =>
     [
       'airtable.recordId',
@@ -2356,13 +2350,36 @@ function requiresExactIdForLink(
   );
 }
 
+function hasStructuredExistingIdentityReference(
+  action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
+): boolean {
+  if (action.operation !== 'create') return false;
+  const known = action.properties.some((property) =>
+    property.key.endsWith('.dedupe.knownExternalId'),
+  );
+  if (known) return false;
+  return action.properties.some((property) =>
+    [
+      'airtable.recordId',
+      'linear.issueId',
+      'notion.pageId',
+      'notion.recordId',
+      'notion.relation.sourceRecordId',
+      'trello.cardId',
+      'trello.boardId',
+      'trello.listId',
+      'trello.checklistId',
+    ].includes(property.key),
+  );
+}
+
 function isSyntheticRelationshipCreate(
   action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
 ): boolean {
   if (action.operation !== 'create') return false;
   return (
-    /\blink\b.+\bto\b/i.test(action.target) ||
-    action.objectType.toLocaleLowerCase().includes('relation')
+    action.objectType.toLocaleLowerCase().includes('relation') ||
+    isSyntheticRelationshipTarget(action.target)
   );
 }
 
