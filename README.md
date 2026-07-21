@@ -1,50 +1,18 @@
 # Aurous
 
-Productivity, resolved. Aurous is a local-first CLI that turns explicitly approved project context and a plain-language objective into a previewable, auditable Notion, Linear, or Airtable workspace plan. After approval, it asks your already-authenticated Codex or Claude Code installation to execute that exact plan through the connected integration.
+**Aurous turns project context into a reviewed, ready-to-use productivity workspace—without asking you to learn each tool’s setup.**
 
-No AI, Notion, or Linear credentials are requested, copied, or stored by Aurous.
+[Read the public Aurous guide](https://aurous-guide.superfiedstudd.chatgpt.site/) · [Judge quickstart](docs/JUDGE_GUIDE.md) · [Architecture](ARCHITECTURE.md)
 
-## Requirements
+## The problem
 
-- Node.js 20 or newer
-- npm 10 or newer
-- For live runs: a locally authenticated Codex CLI or Claude Code CLI with the official Notion or Linear MCP configured
+Starting a project workspace is slow and error-prone. You have to decide how to structure work, find the right destination, and manually create pages, issues, fields, or cards—often while copying IDs and hoping you do not create duplicates.
 
-Mock mode needs no external authentication and exercises the complete workflow.
+Aurous is a local-first CLI that makes that process deliberate. It uses your project context and an existing local AI agent to prepare the workspace, while keeping every write visible and under your control.
 
-## Interactive shell
+## How Aurous works
 
-Launch the persistent Aurous experience with either command:
-
-```bash
-aurous
-# During development:
-npm run dev -- shell
-```
-
-The shell keeps one live gold Aurous surface with the active agent/model, target, project, selected context, friendly destination, preset, state, and latest run. On compatible terminals it redraws that surface in place while committing only plans, previews, results, and real failures to normal scrollback. `NO_COLOR`, redirected output, and limited terminals use a clean append-only fallback. The readline composer supports normal terminal editing, duplicate-free Up/Down command history, Home/End navigation, context-aware Ctrl+C, and graceful EOF/exit behavior.
-
-Start with configuration commands when needed, then ask naturally:
-
-```text
-/agent codex
-/model gpt-5.6
-/target linear
-/context demo/linear-build-week.json
-Set up Linear for this project using my current context
-```
-
-A natural-language request selects an explicitly named Notion, Linear, or Airtable target, inspects the connected integration read-only, resolves a safe destination, generates and saves the Aurous plan, prints the complete preview, requires typed `apply` approval, executes through the existing adapter, records the result, and returns to the composer. Natural-language requests use intent-preserving agent planning by default; presets are activated only by an explicit `/preset` command or a dedicated demo command. The shell starts with the detected project root (`.`) visible as its context; use `/context <paths...>` before planning to narrow or replace it.
-
-Aurous detects projects from `.git`, `package.json`, or an existing project-local `.aurous/context.json`. When launched from a broad directory such as `~` without a project marker, it does not ingest that directory or create a home-directory context pack; it asks you to `cd` into the project and relaunch.
-
-When only one Notion location or Linear team is available, Aurous selects it automatically. When several are safe, the shell shows friendly numbered names, reprompts on blank input, accepts `cancel`, saves the selected exact identity internally, and resumes the suspended request. Normal onboarding never asks for a page URL, workspace ID, team key, or UUID.
-
-The versioned project context pack lives at `.aurous/context.json`. It stores a bounded repository summary with source provenance, never file contents or credentials. `/context show` explains the current project state, `/context refresh` rebuilds only bounded project-local context, `/context export` writes prompt-ready Markdown and JSON exports, `/context destinations` shows saved destination IDs and provenance for inspection, and `/context forget notion|linear|airtable` removes a saved choice. Advanced users can stage a verified override with `/context override <integration> <id-or-url> <friendly-name>`.
-
-Available slash commands are `/help`, `/agent`, `/model`, `/target`, `/context`, `/preset`, `/plan`, `/apply`, `/runs`, `/status`, `/clear`, and `/exit`. Run `/help` inside the shell for accepted arguments.
-
-## Install
+For the persistent `aurous` command, install the package once from this repository:
 
 ```bash
 npm install
@@ -52,65 +20,93 @@ npm run build
 npm link
 ```
 
-During development, replace `aurous` with `npm run dev --`.
-
-## Five-minute demo
+Start with the interactive shell:
 
 ```bash
-aurous init
-aurous doctor
-aurous plan \
-  --agent mock \
-  --tool notion \
-  --context . \
-  --prompt "Create a workspace that helps me manage this project"
-aurous runs
-aurous apply <run-id> --yes
-aurous diagnose <run-id>
+aurous
+# During development:
+npm run dev -- shell
 ```
 
-`plan` prints the context summary before any live agent is invoked. `apply` reloads the saved plan, previews its exact actions, and requires confirmation (`--yes` is an explicit confirmation for automation).
+Then choose an agent and destination, provide context, and describe the outcome in plain language. Aurous follows one explicit path:
 
-## Linear Build Week demo
+```text
+project context → inspect workspace → plan → preview → approve → apply → safe rerun
+```
 
-The polished Linear path uses a small structured launch preset and runs context loading, deterministic planning, full preview, approval, official Linear MCP execution, and the completion summary in one command:
+1. **Project context** — Aurous reads only the paths you choose and makes a bounded Context Pack.
+2. **Inspect workspace** — it uses the connected integration read-only to find a safe destination.
+3. **Plan** — your local Codex or Claude Code creates a validated, saved plan.
+4. **Preview** — every intended write is shown before anything changes.
+5. **Approve** — you type the approval phrase yourself.
+6. **Apply** — Aurous executes only the saved plan.
+7. **Safe rerun** — exact compatible objects are reused or skipped; ambiguous matches stop instead of guessing.
+
+## Supported integrations
+
+The validated integrations are:
+
+- **Notion** — pages, databases, properties, relations, statuses, and views.
+- **Linear** — projects, milestones, issues, labels, priorities, and relationships.
+- **Airtable** — bases, tables, fields, records, and typed record relationships when supported by the connected MCP.
+- **Trello** — boards, lists, cards, checklists, and approved card updates.
+
+Use either a locally authenticated **Codex CLI** or **Claude Code CLI**. Aurous uses that existing local authentication; it does not collect, copy, or store AI or integration credentials.
+
+## 60-second local demo
+
+This mock run needs no external account, MCP connection, or credentials. From the Aurous repository:
 
 ```bash
-npm run dev -- linear-demo \
-  --agent codex \
-  --context demo/linear-build-week.json
+npm install
+npm run build
+npm run dev -- init --agent mock --tool notion
+npm run dev -- plan --agent mock --tool notion --context . --prompt "Create a workspace that helps me manage this project"
+npm run dev -- runs
 ```
 
-Type `apply` only after reviewing every project, label, milestone, and issue property. For a rehearsed noninteractive run, `--yes` is the explicit approval. Exact-name checks are limited to approved targets so repeated runs skip compatible existing objects instead of duplicating them where practical. The saved result distinguishes created objects, skipped actions, compatibility notes, warnings, and failures, and prints returned Linear IDs and URLs.
-
-If an apply ends `partial` after recording external object IDs, generate a separate read-only recovery plan before attempting more writes:
+Copy the run ID printed by `plan`, then apply the previewed plan:
 
 ```bash
-aurous recover <partial-run-id>
-# Review the exact-ID classifications and any compatibility decisions.
-aurous recover <recovery-run-id> --apply
-# Type the displayed "recover <recovery-run-id>" phrase after the second preview.
+npm run dev -- apply <run-id> --yes
 ```
 
-Recovery has no `--yes` bypass. It fetches only persisted external IDs, never searches or reuses by name, converts unsupported custom Notion Status definitions to explicit Select options when the inspected MCP supports them, verifies live state again after approval, and checkpoints each successful action before continuing.
+The result is saved locally under `.aurous/runs/`. For a fuller judge path, see [docs/JUDGE_GUIDE.md](docs/JUDGE_GUIDE.md).
 
-## Commands
+## Live integration setup
 
-| Command                                | Purpose                                                                |
-| -------------------------------------- | ---------------------------------------------------------------------- |
-| `aurous` or `aurous shell`             | Open the persistent interactive shell                                  |
-| `aurous init`                          | Create local `.aurous/config.json` state without credentials           |
-| `aurous doctor [--verbose]`            | Check runtime, agent installations, auth, and MCP readiness            |
-| `aurous plan ...`                      | Read only the provided context paths and create a validated saved plan |
-| `aurous apply <run-id> [--yes]`        | Approve and execute exactly one saved plan                             |
-| `aurous linear-demo ...`               | Run the context-to-Linear demo with one preview and approval flow      |
-| `aurous recover <run-id> [--apply]`    | Reconcile a partial run read-only or approve its saved recovery plan   |
-| `aurous runs`                          | List local runs and statuses                                           |
-| `aurous diagnose <run-id> [--verbose]` | Print a redacted, shareable diagnostic report                          |
+For a live run, install and authenticate Codex CLI or Claude Code CLI, then configure the productivity tool’s MCP connection in that local agent. Aurous checks readiness before it plans:
 
-Use `aurous <command> --help` for all options. Runs and copied context are local to `.aurous/runs/`; portable project preferences and verified destinations are in `.aurous/context.json`. Neither location contains credentials or integration tokens.
+```bash
+aurous doctor --agent codex --verbose
+# or
+aurous doctor --agent claude --verbose
+```
 
-## Development
+When the doctor check is ready, open `aurous` and select your agent, target, and context. A scripted live plan uses the same explicit arguments:
+
+```bash
+aurous plan --agent codex --tool linear --context . --prompt "Set up a workspace for this project"
+```
+
+Do not add workspace, page, team, board, record, or token IDs during normal onboarding. Aurous resolves one safe destination or presents friendly choices. The public guide explains the flow without exposing credentials.
+
+## Safety and approval model
+
+- **Inspect before writing:** destination discovery is read-only.
+- **Typed approval:** every saved plan is previewed; writes wait for explicit confirmation.
+- **Exact-ID binding:** existing objects are verified by their external IDs, never names alone.
+- **Duplicate prevention:** compatible exact matches are reused or skipped on rerun.
+- **Safe failure:** ambiguous, incompatible, or unverified matches stop visibly rather than expanding scope.
+- **Auditable results:** plans, previews, results, and redacted diagnostics are preserved locally in the run artifacts.
+
+## How Codex and GPT-5.6 were used
+
+Codex accelerated Aurous from planning through packaging: it helped plan the CLI flow, implement adapters and safety boundaries, debug edge cases, analyze exact-ID behavior, and validate integrations. GPT-5.6 was used through the local agent workflow for structured planning and implementation assistance, debugging, safety analysis, and integration validation. Aurous still requires a human-reviewed plan and explicit approval before external writes.
+
+## Testing and validated results
+
+Run the current automated suite with:
 
 ```bash
 npm run lint
@@ -119,18 +115,17 @@ npm test
 npm run build
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md), [CONTRIBUTING.md](CONTRIBUTING.md), and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+The final packaging check passed **241 automated tests**. Live smoke validation has exercised Notion, Linear, Airtable, and Trello, including rerun behavior. The external smoke harness and preserved artifacts are described in [docs/JUDGE_GUIDE.md](docs/JUDGE_GUIDE.md).
 
-## Safety model
+## Supported platforms
 
-- Context is opt-in per path; symlinks, secrets, `.git`, dependencies, build output, and large/binary files are skipped.
-- Destination discovery may call only read/list/search/get operations through the connected integration. Plan generation itself receives an explicit no-tool instruction.
-- Every new plan action is bound to one verified exact destination ID. Unresolved values such as `user-selected-parent` are rejected before preview and again before apply.
-- Applying uses the saved plan as an allowlist. The execution prompt forbids scope expansion.
-- Recovery reuses only exact persisted external IDs, has no automatic deletion, requires a fresh typed approval, and stops after the first partial or ambiguous action.
-- Logs and errors are redacted before persistence and include stable `AUR-*` codes.
-- Missing optional tools never prevent mock mode or unrelated adapters from working.
+- macOS and Windows with Node.js 20+ and npm 10+.
+- A locally installed Codex CLI or Claude Code CLI for live runs.
+- Any of the four validated MCP-connected integrations listed above.
 
-## License
+## Architecture links
 
-No license has been selected yet.
+- [Architecture](ARCHITECTURE.md) — boundaries, plan/apply contracts, and integration model.
+- [Judge guide](docs/JUDGE_GUIDE.md) — fastest mock evaluation and optional live smoke path.
+- [Development guide](docs/DEVELOPMENT.md) — contributor commands and implementation notes.
+- [Known issues](docs/KNOWN_ISSUES.md) — current constraints and operational caveats.
