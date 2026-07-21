@@ -721,9 +721,16 @@ function convertCustomStatusToSelect(action: PlanAction): PlanAction {
     .map((status) => status.name)
     .filter((name): name is string => typeof name === 'string');
   const converted = properties.map((property) => {
-    if (!isRecord(property) || property.name !== 'Status' || property.type !== 'status')
-      return property;
-    return { name: 'Status', type: 'select', options: statusOptions };
+    if (!isRecord(property) || property.type !== 'status') return property;
+    const inlineOptions = Array.isArray(property.options)
+      ? property.options.filter((option): option is string => typeof option === 'string')
+      : [];
+    const options = inlineOptions.length > 0 ? inlineOptions : statusOptions;
+    return {
+      name: typeof property.name === 'string' ? property.name : 'Status',
+      type: 'select',
+      ...(options.length > 0 ? { options } : {}),
+    };
   });
   return {
     ...action,

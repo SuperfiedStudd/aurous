@@ -8,7 +8,7 @@ import {
   type AgentName,
   type ToolName,
 } from '../domain/schemas.js';
-import { ingestContext } from './context.js';
+import { ingestContext, ingestInlineContext, PASTED_CONTEXT_LABEL } from './context.js';
 import { asAurousError, AurousError } from './errors.js';
 import { formatError } from './output.js';
 import { formatApprovalRequest, formatPlainNotice, formatShellStatus } from './presentation.js';
@@ -51,6 +51,8 @@ interface ShellState extends ShellSnapshot {
   lastRequest?: string;
   destinationHint?: string;
   destinationOverride?: { integration: ToolName; id: string; name: string };
+  /** Plain-text context captured via `/context` paste mode. */
+  pastedContext?: string;
 }
 
 type PromptKind = 'composer' | 'destination' | 'approval';
@@ -259,9 +261,8 @@ export class AurousShell {
 
   private async contextCommand(args: string[]): Promise<void> {
     const state = this.requireState();
-    this.requireProjectRoot();
     if (args.length === 0) {
-      this.dependencies.renderer.notice(`Context ${state.contextPaths.join(', ')}`);
+      await this.capturePastedContext();
       return;
     }
     const subcommand = args[0]?.toLowerCase();
@@ -283,7 +284,7 @@ export class AurousShell {
                 `  exact ID   ${destination.id}`,
                 `  source     ${destination.source} · verified ${destination.verifiedAt}`,
               ])
-            : ['No integration destinations are saved for this project.'];
+            : ['No integration destinations are saved for this workspace.'];
       this.dependencies.renderer.showOverlay(
         formatPlainNotice(
           subcommand === 'show' ? 'Project Context' : 'Resolved Destinations',
@@ -335,10 +336,68 @@ export class AurousShell {
       return;
     }
     const context = await ingestContext({ cwd: this.dependencies.workspace, paths: args });
+    delete state.pastedContext;
     state.contextPaths = [...args];
     this.setReady(
       `Context ${args.join(', ')} · ${context.summary.fileCount} files · ${context.summary.totalBytes} bytes`,
     );
+  }
+
+  private async capturePastedContext(): Promise<void> {
+    const state = this.requireState();
+    this.dependencies.renderer.beginPasteMode(
+      'Paste plain-text context. Type /done on its own line when finished (or /cancel to abort).',
+    );
+    const lines: string[] = [];
+    let canceled = false;
+    try {
+      while (!this.exitRequested) {
+        const line = await this.ask('composer', 'context', true);
+        if (line === undefined) {
+          if (this.consumePromptCancellation()) {
+            canceled = true;
+            break;
+          }
+          canceled = true;
+          break;
+        }
+        const trimmed = line.trim();
+        if (trimmed === '/done') break;
+        if (trimmed === '/cancel') {
+          canceled = true;
+          break;
+        }
+        lines.push(line);
+      }
+    } finally {
+      if (canceled || this.exitRequested) {
+        this.requireState().state = 'Ready';
+        this.dependencies.renderer.endPasteMode(this.view(), {
+          message: 'Paste canceled.',
+          tone: 'warning',
+        });
+      }
+    }
+    if (canceled || this.exitRequested) return;
+
+    try {
+      const content = lines.join('\n');
+      const context = ingestInlineContext({
+        cwd: this.dependencies.workspace,
+        content,
+      });
+      state.pastedContext = context.documents[0]!.content;
+      state.contextPaths = [PASTED_CONTEXT_LABEL];
+      state.state = 'Ready';
+      this.dependencies.renderer.endPasteMode(this.view(), {
+        message: `Context pasted · ${context.summary.fileCount} document · ${context.summary.totalBytes} bytes`,
+        tone: 'success',
+      });
+    } catch (error) {
+      state.state = 'Ready';
+      this.dependencies.renderer.endPasteMode(this.view());
+      throw error;
+    }
   }
 
   private selectPreset(args: string[]): void {
@@ -358,7 +417,7 @@ export class AurousShell {
 
   private async plan(objective?: string): Promise<boolean> {
     const state = this.requireState();
-    this.requireProjectRoot();
+    this.requireUsableContext();
     this.setPhase('Planning');
     const controller = this.beginActivity();
     const model = invocationModel(state);
@@ -374,6 +433,7 @@ export class AurousShell {
                 : {}),
               ...(state.destinationHint ? { team: state.destinationHint } : {}),
               contextPaths: state.contextPaths,
+              ...(state.pastedContext ? { inlineContext: state.pastedContext } : {}),
               chooseDestination: (request) => this.chooseDestination(request),
               ...(state.destinationOverride?.integration === state.target
                 ? {
@@ -390,6 +450,7 @@ export class AurousShell {
               agent: state.agent,
               tool: state.target,
               contextPaths: state.contextPaths,
+              ...(state.pastedContext ? { inlineContext: state.pastedContext } : {}),
               objective: `${
                 objective ??
                 state.lastRequest ??
@@ -547,11 +608,13 @@ export class AurousShell {
         'Help',
         [
           '/agent · /model · /target     runtime selection',
-          '/context [paths] · /preset    planning inputs',
-          '/context show · destinations · forget <integration>',
+          '/context · /context [paths]   paste or select planning inputs',
+          '/preset · /context show · destinations · forget <integration>',
           '/plan · /apply                workflow control',
           '/runs · /status               local run state',
           '/clear · /exit                shell control',
+          '',
+          'Paste mode: /context  →  paste text  →  /done',
           '',
           ...formatAgentModelsHelp(),
         ],
@@ -713,11 +776,15 @@ export class AurousShell {
   }
 
   private contextStore(): ContextPackStore {
-    return new ContextPackStore(this.requireProjectRoot());
+    return new ContextPackStore(this.workspaceRoot());
+  }
+
+  private workspaceRoot(): string {
+    return this.projectRoot ?? this.dependencies.workspace;
   }
 
   private async refreshContextDestination(): Promise<void> {
-    if (!this.state || !this.projectRoot) return;
+    if (!this.state) return;
     const store = this.contextStore();
     let pack = await store.loadOrCreate(this.state.preset);
     if (pack.selectedPreset && !pack.selectedPresetSource) {
@@ -725,7 +792,7 @@ export class AurousShell {
     } else if (pack.selectedPresetSource === 'explicit-user' && pack.selectedPreset) {
       this.state.preset = normalizePreset(pack.selectedPreset);
     }
-    this.state.project = pack.project.name;
+    if (this.projectRoot) this.state.project = pack.project.name;
     const destination = destinationFor(pack, this.state.target);
     if (destination) {
       this.state.destinationName = destination.name;
@@ -733,14 +800,14 @@ export class AurousShell {
     }
   }
 
-  private requireProjectRoot(): string {
-    if (this.projectRoot) return this.projectRoot;
+  private requireUsableContext(): void {
+    const state = this.requireState();
+    if (state.pastedContext || state.contextPaths.length > 0) return;
     throw new AurousError({
-      code: 'AUR-PROJECT-001',
-      summary: 'Aurous did not find a project in this directory.',
-      probableCause:
-        'The shell was launched outside a directory containing .git, package.json, or an existing project context pack.',
-      nextAction: 'Change into the project directory and launch Aurous again.',
+      code: 'AUR-CTX-001',
+      summary: 'No planning context is selected.',
+      probableCause: 'This session has no pasted context and no context file paths.',
+      nextAction: 'Run /context to paste notes, or /context <file-path> to select files.',
       severity: 'recoverable',
     });
   }
@@ -763,7 +830,9 @@ export function createReadlineShellTerminal(
     process.env.FORCE_COLOR !== '0' &&
     process.env.TERM !== 'dumb';
   const ansi = color;
-  const columns = terminalOutput.columns ?? (Number(process.env.COLUMNS) || 96);
+  const unicode = process.env.TERM !== 'dumb';
+  const readColumns = () =>
+    Math.max(1, terminalOutput.columns ?? (Number(process.env.COLUMNS) || 96));
   const reader = createInterface({
     input,
     output,
@@ -779,8 +848,12 @@ export function createReadlineShellTerminal(
   });
   return {
     ansi,
-    columns,
-    renderOptions: { width: columns, color, unicode: process.env.TERM !== 'dumb' },
+    get columns() {
+      return readColumns();
+    },
+    get renderOptions() {
+      return { width: readColumns(), color, unicode };
+    },
     async question(prompt) {
       if (closed) return undefined;
       const controller = new AbortController();
@@ -867,7 +940,7 @@ export function tokenize(input: string): string[] {
 
 function hintFor(state: ShellState): string {
   if (state.contextPaths.length === 0)
-    return 'No project detected. Change into a project directory and relaunch Aurous.';
+    return 'No project detected. Run /context to paste notes or select files, then plan.';
   switch (state.state) {
     case 'Selecting Destination':
       return 'Choose a destination by number, or type cancel.';

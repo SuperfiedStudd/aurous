@@ -197,6 +197,17 @@ export async function detectProjectRoot(cwd: string): Promise<string> {
   });
 }
 
+/**
+ * Resolves where Aurous should store run artifacts, discovery, and context packs.
+ * Prefers a detected software/project root; otherwise uses the current directory
+ * so personal productivity flows can run without repository markers.
+ */
+export async function resolveWorkspaceRoot(cwd: string): Promise<string> {
+  const found = await findProjectRoot(cwd);
+  if (found) return found;
+  return realpath(cwd).catch(() => path.resolve(cwd));
+}
+
 export async function findProjectRoot(
   cwd: string,
   homeDirectory = os.homedir(),
@@ -209,6 +220,26 @@ export async function findProjectRoot(
       (await exists(path.join(current, '.git'))) ||
       (await exists(path.join(current, 'package.json'))) ||
       (await exists(path.join(current, '.aurous', 'context.json')))
+    )
+      return current;
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+/** Software project markers only (.git / package.json). Ignores .aurous/context.json. */
+export async function findSoftwareProjectRoot(
+  cwd: string,
+  homeDirectory = os.homedir(),
+): Promise<string | undefined> {
+  let current = await realpath(cwd);
+  const home = await realpath(homeDirectory).catch(() => homeDirectory);
+  while (true) {
+    if (current === home) return undefined;
+    if (
+      (await exists(path.join(current, '.git'))) ||
+      (await exists(path.join(current, 'package.json')))
     )
       return current;
     const parent = path.dirname(current);

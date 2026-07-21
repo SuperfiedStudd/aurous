@@ -54,7 +54,7 @@ import {
   type RecoveryPlan,
 } from '../domain/recovery.js';
 import { asAurousError, AurousCommandError, AurousError } from './errors.js';
-import { ingestContext } from './context.js';
+import { ingestContext, ingestInlineContext } from './context.js';
 import {
   formatContextSummary,
   formatExecutionResult,
@@ -73,8 +73,29 @@ import {
 import { createRunId } from './run-id.js';
 import { redactValue } from './redact.js';
 import type { RunStore } from './run-store.js';
-import { ContextPackStore, detectProjectRoot, destinationFor } from './context-pack.js';
+import { ContextPackStore, destinationFor, findSoftwareProjectRoot, resolveWorkspaceRoot } from './context-pack.js';
 import { resolveDestination, type DestinationChooser } from './destination-resolver.js';
+import {
+  contextTextFromBundle,
+  isIgnoredNotionDestination,
+  isNotionPersonalOnboarding,
+  resolveNotionPersonalDestination,
+} from '../adapters/productivity/notion-onboarding.js';
+import {
+  isIgnoredLinearDestination,
+  isLinearPersonalOnboarding,
+  resolveLinearPersonalDestination,
+} from '../adapters/productivity/linear-onboarding.js';
+import {
+  isIgnoredAirtableDestination,
+  isAirtablePersonalOnboarding,
+  resolveAirtablePersonalDestination,
+} from '../adapters/productivity/airtable-onboarding.js';
+import {
+  isIgnoredTrelloDestination,
+  isTrelloPersonalOnboarding,
+  resolveTrelloPersonalDestination,
+} from '../adapters/productivity/trello-onboarding.js';
 import {
   DestinationDiscoverySchema,
   SanitizedDiscoveryTraceSchema,
@@ -95,6 +116,8 @@ export interface PlanOptions {
   agent?: string;
   tool?: string;
   contextPaths: string[];
+  /** Plain-text context from shell paste mode; used instead of filesystem paths when set. */
+  inlineContext?: string;
   objective: string;
   model?: string;
   embedded?: boolean;
@@ -120,6 +143,7 @@ export interface LinearDemoPlanOptions {
   agent?: string;
   team?: string;
   contextPaths: string[];
+  inlineContext?: string;
   model?: string;
   embedded?: boolean;
   chooseDestination?: DestinationChooser;
@@ -242,7 +266,7 @@ export class AurousServices {
         nextAction: 'Describe the outcome you want with --prompt.',
       });
     }
-    const projectRoot = await detectProjectRoot(this.dependencies.workspace);
+    const projectRoot = await resolveWorkspaceRoot(this.dependencies.workspace);
     const runId = createRunId(this.now());
     const timestamp = this.now().toISOString();
     if (!options.embedded)
@@ -255,10 +279,15 @@ export class AurousServices {
           model: options.model ?? modelDisplayName(agentName),
         }),
       );
-    const context = await ingestContext({
-      cwd: projectRoot,
-      paths: options.contextPaths,
-    });
+    const context = options.inlineContext
+      ? ingestInlineContext({
+          cwd: projectRoot,
+          content: options.inlineContext,
+        })
+      : await ingestContext({
+          cwd: projectRoot,
+          paths: options.contextPaths,
+        });
     const contextPack = await new ContextPackStore(projectRoot).loadOrCreate(options.preset);
     if (!options.embedded)
       this.dependencies.output.log(`\n${formatContextSummary(context.summary)}`);
@@ -405,7 +434,7 @@ export class AurousServices {
   async planLinearDemo(options: LinearDemoPlanOptions): Promise<AurousPlan> {
     const config = await this.dependencies.store.loadConfig();
     const agentName = AgentNameSchema.parse(options.agent ?? config.defaultAgent);
-    const projectRoot = await detectProjectRoot(this.dependencies.workspace);
+    const projectRoot = await resolveWorkspaceRoot(this.dependencies.workspace);
     const runId = createRunId(this.now());
     const timestamp = this.now().toISOString();
     if (!options.embedded)
@@ -418,10 +447,15 @@ export class AurousServices {
           model: options.model ?? modelDisplayName(agentName),
         }),
       );
-    const context = await ingestContext({
-      cwd: projectRoot,
-      paths: options.contextPaths,
-    });
+    const context = options.inlineContext
+      ? ingestInlineContext({
+          cwd: projectRoot,
+          content: options.inlineContext,
+        })
+      : await ingestContext({
+          cwd: projectRoot,
+          paths: options.contextPaths,
+        });
     const preset = parseLinearDemoContext(context);
     const requestedObjective =
       options.objective ??
@@ -692,7 +726,7 @@ export class AurousServices {
     preset?: string;
     projectRoot?: string;
   }): Promise<ResolvedDestination | undefined> {
-    const projectRoot = input.projectRoot ?? (await detectProjectRoot(this.dependencies.workspace));
+    const projectRoot = input.projectRoot ?? (await resolveWorkspaceRoot(this.dependencies.workspace));
     const contextStore = new ContextPackStore(projectRoot);
     const pack = await contextStore.loadOrCreate(input.preset);
     const discoveryId = createRunId(this.now()).replace(/^run-/, 'discovery-');
@@ -770,18 +804,50 @@ export class AurousServices {
       });
     }
     const saved = destinationFor(pack, input.productivity.name);
-    const destination = await resolveDestination({
-      adapter: input.productivity,
-      discovery,
-      objective: input.objective,
-      projectName: pack.project.name,
-      ...(saved ? { saved } : {}),
-      ...(input.choose ? { choose: input.choose } : {}),
-      ...(input.explicitOverride ? { explicitOverride: input.explicitOverride } : {}),
-    });
+    const contextText = contextTextFromBundle(input.context);
+    const softwareRoot = await findSoftwareProjectRoot(this.dependencies.workspace);
+    const personalOnboarding = !input.explicitOverride
+      ? resolvePersonalOnboarding(input.productivity.name, input.objective, contextText, Boolean(softwareRoot))
+      : undefined;
+
+    if (
+      personalOnboarding &&
+      saved &&
+      (personalOnboarding.isIgnored(saved, input.objective) ||
+        !discovery.candidates.some((candidate) => candidate.id === saved.id))
+    ) {
+      await contextStore.forgetDestination(input.productivity.name);
+    }
+
+    const destination = personalOnboarding
+      ? personalOnboarding.resolve({
+          discovery,
+          objective: input.objective,
+          contextText,
+        })
+      : await resolveDestination({
+          adapter: input.productivity,
+          discovery,
+          objective: input.objective,
+          projectName: pack.project.name,
+          ...(saved &&
+          !(
+            input.productivity.name === 'notion' &&
+            isIgnoredNotionDestination(saved, input.objective)
+          )
+            ? { saved }
+            : {}),
+          ...(input.choose ? { choose: input.choose } : {}),
+          ...(input.explicitOverride ? { explicitOverride: input.explicitOverride } : {}),
+        });
     if (!destination) return undefined;
     await contextStore.saveDestination(destination, input.preset);
-    this.dependencies.output.log(`✓ Using ${destination.name}`);
+    const progressName = destination.operatingRootName ?? destination.name;
+    this.dependencies.output.log(
+      destination.source === 'context-root-create'
+        ? `✓ Creating ${progressName}`
+        : `✓ Using ${progressName}`,
+    );
     return destination;
   }
 
@@ -957,7 +1023,7 @@ export class AurousServices {
     result: ExecutionResult,
   ): Promise<void> {
     if (plan.tool === 'mock') return;
-    const projectRoot = await detectProjectRoot(this.dependencies.workspace);
+    const projectRoot = await resolveWorkspaceRoot(this.dependencies.workspace);
     const contextStore = new ContextPackStore(projectRoot);
     const pack = await contextStore.loadOrCreate();
     const saved = destinationFor(pack, plan.tool);
@@ -2506,6 +2572,54 @@ function isSyntheticRelationshipCreate(
     action.objectType.toLocaleLowerCase().includes('relation') ||
     isSyntheticRelationshipTarget(action.target)
   );
+}
+
+function resolvePersonalOnboarding(
+  integration: ToolName,
+  objective: string,
+  contextText: string,
+  hasSoftwareProject: boolean,
+):
+  | {
+      isIgnored: (
+        candidate: { name: string; description?: string; sourceDetail?: string },
+        objective: string,
+      ) => boolean;
+      resolve: (input: {
+        discovery: import('../domain/destinations.js').DestinationDiscovery;
+        objective: string;
+        contextText?: string;
+      }) => ResolvedDestination;
+    }
+  | undefined {
+  if (integration === 'notion' && isNotionPersonalOnboarding(objective, contextText, hasSoftwareProject)) {
+    return {
+      isIgnored: isIgnoredNotionDestination,
+      resolve: resolveNotionPersonalDestination,
+    };
+  }
+  if (integration === 'linear' && isLinearPersonalOnboarding(objective, contextText, hasSoftwareProject)) {
+    return {
+      isIgnored: isIgnoredLinearDestination,
+      resolve: resolveLinearPersonalDestination,
+    };
+  }
+  if (
+    integration === 'airtable' &&
+    isAirtablePersonalOnboarding(objective, contextText, hasSoftwareProject)
+  ) {
+    return {
+      isIgnored: isIgnoredAirtableDestination,
+      resolve: resolveAirtablePersonalDestination,
+    };
+  }
+  if (integration === 'trello' && isTrelloPersonalOnboarding(objective, contextText, hasSoftwareProject)) {
+    return {
+      isIgnored: isIgnoredTrelloDestination,
+      resolve: resolveTrelloPersonalDestination,
+    };
+  }
+  return undefined;
 }
 
 function validateExecutablePlanDestination(plan: AurousPlan): void {

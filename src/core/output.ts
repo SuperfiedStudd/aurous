@@ -52,17 +52,28 @@ export function formatPlan(plan: AurousPlan, options: RenderOptions = {}): strin
   ];
   const previewLines = [`${plan.plannedActions.length} exact action(s) · no writes yet`, ''];
   for (const action of plan.plannedActions) {
+    const iconEmoji = action.properties.find((property) => property.key === 'notion.icon.emoji')
+      ?.value;
+    const iconPreserve = action.properties.some(
+      (property) =>
+        property.key === 'notion.icon.preserveExisting' && property.value === 'true',
+    );
+    const targetLabel = iconEmoji ? `${iconEmoji} ${action.target}` : action.target;
     previewLines.push(
-      `${action.id}  ${action.operation.toUpperCase()} ${action.objectType}  ${action.target}`,
+      `${action.id}  ${action.operation.toUpperCase()} ${action.objectType}  ${targetLabel}`,
       `  ${action.description}`,
     );
     let exactReuseShown = false;
+    let iconPreserveShown = false;
     const exactRelationshipsShown = new Set<string>();
     for (const property of action.properties) {
       if (!options.verbose && isHiddenDestinationProperty(property.key)) {
         if (property.key.endsWith('.dedupe.knownExternalId') && !exactReuseShown) {
           previewLines.push('  reuse: exact existing object verified during read-only inspection');
           exactReuseShown = true;
+        } else if (property.key === 'notion.icon.preserveExisting' && !iconPreserveShown) {
+          previewLines.push('  icon: preserve existing (no update)');
+          iconPreserveShown = true;
         } else {
           const relation = property.key.match(/^linear\.(project|milestone|label)Ids?$/)?.[1];
           if (relation && !exactRelationshipsShown.has(relation)) {
@@ -70,6 +81,14 @@ export function formatPlan(plan: AurousPlan, options: RenderOptions = {}): strin
             exactRelationshipsShown.add(relation);
           }
         }
+        continue;
+      }
+      if (
+        !options.verbose &&
+        property.key === 'notion.icon.type' &&
+        iconEmoji &&
+        !iconPreserve
+      ) {
         continue;
       }
       previewLines.push(`  ${property.key}: ${property.value}`);
@@ -95,14 +114,34 @@ export function formatPlan(plan: AurousPlan, options: RenderOptions = {}): strin
 function isHiddenDestinationProperty(key: string): boolean {
   return (
     key === 'notion.destination.parentPageId' ||
+    key === 'notion.destination.rootActionId' ||
+    key === 'notion.parent.workspace' ||
+    key === 'notion.icon.preserveExisting' ||
     key === 'linear.teamId' ||
     key === 'linear.projectId' ||
+    key === 'linear.projectActionId' ||
     key === 'linear.milestoneId' ||
     key === 'linear.labelIds' ||
     key === 'linear.dedupe.identitySource' ||
+    key === 'airtable.workspaceId' ||
+    key === 'airtable.baseId' ||
+    key === 'airtable.baseActionId' ||
+    key === 'airtable.tableId' ||
+    key === 'airtable.tableActionId' ||
+    key === 'airtable.fieldId' ||
+    key === 'airtable.recordId' ||
+    key === 'trello.workspaceId' ||
+    key === 'trello.boardId' ||
+    key === 'trello.boardActionId' ||
+    key === 'trello.listId' ||
+    key === 'trello.listActionId' ||
+    key === 'trello.cardId' ||
+    key === 'trello.cardActionId' ||
+    key === 'trello.labelId' ||
     key === 'mock.workspaceId' ||
     key.endsWith('.dedupe.knownExternalId') ||
-    key.endsWith('.dedupe.knownUrl')
+    key.endsWith('.dedupe.knownUrl') ||
+    key.endsWith('.dedupe.skipReason')
   );
 }
 

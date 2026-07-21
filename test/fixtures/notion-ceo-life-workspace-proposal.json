@@ -1,0 +1,595 @@
+{
+  "proposedWorkspaceStructure": [
+    {
+      "kind": "notion.page",
+      "name": "Aurous Product HQ",
+      "purpose": "Existing approved workspace parent and shared system root."
+    },
+    {
+      "kind": "notion.page",
+      "name": "CEO Home",
+      "purpose": "Single operational home base for current priorities, blockers, upcoming commitments, and follow-ups.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.page",
+      "name": "Work & Leadership",
+      "purpose": "Landing page for strategy, company execution, relationships, meetings, and decisions.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.page",
+      "name": "MBA at Wharton",
+      "purpose": "Landing page for courses, academic work, networking, and deadlines.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.page",
+      "name": "Wedding",
+      "purpose": "Landing page for wedding planning, budget, guests, vendors, and responsibilities.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.page",
+      "name": "Personal Life",
+      "purpose": "Landing page for pickleball, health, travel, reading, notes, and personal goals.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.page",
+      "name": "Weekly Review",
+      "purpose": "Repeatable review workflow consolidating open work, blocked items, upcoming dates, and follow-ups.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.database",
+      "name": "Goals & Outcomes",
+      "purpose": "Annual, quarterly, company, MBA, wedding, and personal goals connected to execution.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.database",
+      "name": "Projects & Initiatives",
+      "purpose": "Company priorities, product initiatives, engineering projects, GTM experiments, and other outcome-oriented work.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.database",
+      "name": "Action Hub",
+      "purpose": "One unified action database for work, school, wedding, and personal next actions.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.database",
+      "name": "People & Relationships",
+      "purpose": "Key work, academic, wedding, and personal relationships with follow-up tracking.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.database",
+      "name": "Meetings & Decisions",
+      "purpose": "Important meetings and leadership decisions with accountable follow-up actions.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.database",
+      "name": "MBA Academic Hub",
+      "purpose": "Courses, assignments, exams, group projects, readings, events, and academic deadlines.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.database",
+      "name": "Wedding Planner",
+      "purpose": "Vendors, guests, invitations, events, payments, decisions, questions, deadlines, and shared responsibilities.",
+      "parent": "Aurous Product HQ"
+    },
+    {
+      "kind": "notion.database",
+      "name": "Personal Activities & Notes",
+      "purpose": "Pickleball, health routines, travel ideas, books, notes, and personal improvement goals.",
+      "parent": "Aurous Product HQ"
+    }
+  ],
+  "plannedActions": [
+    {
+      "id": "action-001",
+      "operation": "create",
+      "objectType": "notion.page",
+      "target": "CEO Home",
+      "description": "Create the central dashboard page for immediate focus and cross-domain visibility.",
+      "properties": [
+        {
+          "key": "notion.page.sections",
+          "value": "[\"Today\",\"Blocked\",\"Upcoming\",\"Follow-ups\",\"Current priorities\"]"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-002",
+      "operation": "create",
+      "objectType": "notion.page",
+      "target": "Work & Leadership",
+      "description": "Create the work landing page for company strategy and execution.",
+      "properties": [
+        {
+          "key": "notion.page.sections",
+          "value": "[\"Goals\",\"Initiatives\",\"Meetings and decisions\",\"Key relationships\",\"Open actions\"]"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-003",
+      "operation": "create",
+      "objectType": "notion.page",
+      "target": "MBA at Wharton",
+      "description": "Create the MBA landing page for academic planning and relationship follow-up.",
+      "properties": [
+        {
+          "key": "notion.page.sections",
+          "value": "[\"Courses and deliverables\",\"Academic deadlines\",\"Networking follow-ups\",\"Reading notes\"]"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-004",
+      "operation": "create",
+      "objectType": "notion.page",
+      "target": "Wedding",
+      "description": "Create the wedding planning landing page.",
+      "properties": [
+        {
+          "key": "notion.page.sections",
+          "value": "[\"Next actions\",\"Budget and payments\",\"Vendors\",\"Guests and invitations\",\"Open questions\"]"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-005",
+      "operation": "create",
+      "objectType": "notion.page",
+      "target": "Personal Life",
+      "description": "Create the personal-life landing page.",
+      "properties": [
+        {
+          "key": "notion.page.sections",
+          "value": "[\"Personal goals\",\"Pickleball\",\"Health\",\"Travel\",\"Books and notes\"]"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-006",
+      "operation": "create",
+      "objectType": "notion.page",
+      "target": "Weekly Review",
+      "description": "Create the weekly review page with a lightweight repeatable checklist.",
+      "properties": [
+        {
+          "key": "notion.page.sections",
+          "value": "[\"Review completed work\",\"Choose next actions\",\"Resolve blocked items\",\"Plan next 14 days\",\"Schedule follow-ups\"]"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-007",
+      "operation": "create",
+      "objectType": "notion.database",
+      "target": "Goals & Outcomes",
+      "description": "Create the shared goals database.",
+      "properties": [
+        {
+          "key": "notion.database.titleProperty",
+          "value": "Goal"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-008",
+      "operation": "create",
+      "objectType": "notion.database",
+      "target": "Projects & Initiatives",
+      "description": "Create the work-projects database.",
+      "properties": [
+        {
+          "key": "notion.database.titleProperty",
+          "value": "Project / Initiative"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-009",
+      "operation": "create",
+      "objectType": "notion.database",
+      "target": "Action Hub",
+      "description": "Create the single cross-domain action database.",
+      "properties": [
+        {
+          "key": "notion.database.titleProperty",
+          "value": "Action"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-010",
+      "operation": "create",
+      "objectType": "notion.database",
+      "target": "People & Relationships",
+      "description": "Create the shared people and relationship database.",
+      "properties": [
+        {
+          "key": "notion.database.titleProperty",
+          "value": "Person / Organization"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-011",
+      "operation": "create",
+      "objectType": "notion.database",
+      "target": "Meetings & Decisions",
+      "description": "Create the database for important meetings and decisions.",
+      "properties": [
+        {
+          "key": "notion.database.titleProperty",
+          "value": "Meeting / Decision"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-012",
+      "operation": "create",
+      "objectType": "notion.database",
+      "target": "MBA Academic Hub",
+      "description": "Create the unified academic database.",
+      "properties": [
+        {
+          "key": "notion.database.titleProperty",
+          "value": "Academic Item"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-013",
+      "operation": "create",
+      "objectType": "notion.database",
+      "target": "Wedding Planner",
+      "description": "Create the unified wedding planning database.",
+      "properties": [
+        {
+          "key": "notion.database.titleProperty",
+          "value": "Wedding Item"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-014",
+      "operation": "create",
+      "objectType": "notion.database",
+      "target": "Personal Activities & Notes",
+      "description": "Create the unified personal planning and notes database.",
+      "properties": [
+        {
+          "key": "notion.database.titleProperty",
+          "value": "Personal Item"
+        }
+      ],
+      "dependsOn": []
+    },
+    {
+      "id": "action-015",
+      "operation": "configure",
+      "objectType": "notion.database",
+      "target": "Goals & Outcomes",
+      "description": "Configure goal properties, statuses, goal-to-project/action relations, and goal views.",
+      "properties": [
+        {
+          "key": "notion.database.properties",
+          "value": "[{\"name\":\"Goal\",\"type\":\"title\"},{\"name\":\"Status\",\"type\":\"status\",\"options\":[\"Not started\",\"On track\",\"At risk\",\"Off track\",\"Achieved\",\"Dropped\"]},{\"name\":\"Domain\",\"type\":\"select\",\"options\":[\"Work\",\"MBA\",\"Wedding\",\"Personal\"]},{\"name\":\"Horizon\",\"type\":\"select\",\"options\":[\"Annual\",\"Quarterly\",\"Monthly\"]},{\"name\":\"Target date\",\"type\":\"date\"},{\"name\":\"Progress\",\"type\":\"number\",\"format\":\"percent\"},{\"name\":\"Projects\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-008\",\"inverseName\":\"Goals\"},{\"name\":\"Actions\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-009\",\"inverseName\":\"Goals\"},{\"name\":\"Outcome / success measure\",\"type\":\"text\"},{\"name\":\"Review notes\",\"type\":\"text\"}]"
+        },
+        {
+          "key": "notion.database.views",
+          "value": "[{\"name\":\"Current quarter\",\"type\":\"table\",\"filter\":\"Horizon is Quarterly and Status is not Achieved and Status is not Dropped\"},{\"name\":\"At risk\",\"type\":\"table\",\"filter\":\"Status is At risk or Status is Off track\"},{\"name\":\"By domain\",\"type\":\"board\",\"groupBy\":\"Domain\"}"
+        }
+      ],
+      "dependsOn": [
+        "action-007",
+        "action-008",
+        "action-009"
+      ]
+    },
+    {
+      "id": "action-016",
+      "operation": "configure",
+      "objectType": "notion.database",
+      "target": "Projects & Initiatives",
+      "description": "Configure work-project properties, statuses, relations, and execution views.",
+      "properties": [
+        {
+          "key": "notion.database.properties",
+          "value": "[{\"name\":\"Project / Initiative\",\"type\":\"title\"},{\"name\":\"Status\",\"type\":\"status\",\"options\":[\"Proposed\",\"Active\",\"Waiting\",\"At risk\",\"Completed\",\"Canceled\"]},{\"name\":\"Workstream\",\"type\":\"select\",\"options\":[\"Company strategy\",\"Fundraising\",\"Hiring\",\"Leadership\",\"Product\",\"Engineering\",\"GTM\",\"Sales\",\"Partnerships\",\"Operations\"]},{\"name\":\"Priority\",\"type\":\"select\",\"options\":[\"P0\",\"P1\",\"P2\",\"P3\"]},{\"name\":\"Start date\",\"type\":\"date\"},{\"name\":\"Target date\",\"type\":\"date\"},{\"name\":\"Goals\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-007\",\"inverseName\":\"Projects\"},{\"name\":\"Actions\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-009\",\"inverseName\":\"Projects\"},{\"name\":\"Stakeholders\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-010\",\"inverseName\":\"Projects\"},{\"name\":\"Outcome\",\"type\":\"text\"},{\"name\":\"Project brief\",\"type\":\"url\"},{\"name\":\"Notes\",\"type\":\"text\"}]"
+        },
+        {
+          "key": "notion.database.views",
+          "value": "[{\"name\":\"Active priorities\",\"type\":\"board\",\"groupBy\":\"Status\",\"filter\":\"Status is Active or Status is At risk\"},{\"name\":\"By workstream\",\"type\":\"board\",\"groupBy\":\"Workstream\",\"filter\":\"Status is not Completed and Status is not Canceled\"},{\"name\":\"Timeline\",\"type\":\"timeline\",\"dateProperty\":\"Target date\"}"
+        }
+      ],
+      "dependsOn": [
+        "action-007",
+        "action-008",
+        "action-009",
+        "action-010"
+      ]
+    },
+    {
+      "id": "action-017",
+      "operation": "configure",
+      "objectType": "notion.database",
+      "target": "Action Hub",
+      "description": "Configure the unified action schema, statuses, relations, and focused task views.",
+      "properties": [
+        {
+          "key": "notion.database.properties",
+          "value": "[{\"name\":\"Action\",\"type\":\"title\"},{\"name\":\"Status\",\"type\":\"status\",\"options\":[\"Inbox\",\"Next\",\"In progress\",\"Waiting\",\"Blocked\",\"Done\",\"Canceled\"]},{\"name\":\"Domain\",\"type\":\"select\",\"options\":[\"Work\",\"MBA\",\"Wedding\",\"Personal\"]},{\"name\":\"Priority\",\"type\":\"select\",\"options\":[\"P0\",\"P1\",\"P2\",\"P3\"]},{\"name\":\"Due date\",\"type\":\"date\"},{\"name\":\"Follow-up date\",\"type\":\"date\"},{\"name\":\"Project\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-008\",\"inverseName\":\"Actions\"},{\"name\":\"Goal\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-007\",\"inverseName\":\"Actions\"},{\"name\":\"People\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-010\",\"inverseName\":\"Actions\"},{\"name\":\"Blocked by\",\"type\":\"text\"},{\"name\":\"Notes\",\"type\":\"text\"}]"
+        },
+        {
+          "key": "notion.database.views",
+          "value": "[{\"name\":\"Now\",\"type\":\"table\",\"filter\":\"Status is Next or Status is In progress\",\"sort\":\"Priority ascending, Due date ascending\"},{\"name\":\"Blocked and waiting\",\"type\":\"table\",\"filter\":\"Status is Blocked or Status is Waiting\"},{\"name\":\"Upcoming\",\"type\":\"calendar\",\"dateProperty\":\"Due date\",\"filter\":\"Status is not Done and Status is not Canceled\"},{\"name\":\"Follow-ups\",\"type\":\"table\",\"filter\":\"Follow-up date is on or before today and Status is not Done and Status is not Canceled\"},{\"name\":\"By domain\",\"type\":\"board\",\"groupBy\":\"Domain\",\"filter\":\"Status is not Done and Status is not Canceled\"}"
+        }
+      ],
+      "dependsOn": [
+        "action-007",
+        "action-008",
+        "action-009",
+        "action-010"
+      ]
+    },
+    {
+      "id": "action-018",
+      "operation": "configure",
+      "objectType": "notion.database",
+      "target": "People & Relationships",
+      "description": "Configure relationship tracking and context-specific follow-up views.",
+      "properties": [
+        {
+          "key": "notion.database.properties",
+          "value": "[{\"name\":\"Person / Organization\",\"type\":\"title\"},{\"name\":\"Context\",\"type\":\"multi_select\",\"options\":[\"Work\",\"MBA\",\"Wedding\",\"Personal\"]},{\"name\":\"Relationship type\",\"type\":\"select\",\"options\":[\"Investor\",\"Candidate\",\"Employee\",\"Customer\",\"Partner\",\"Advisor\",\"Professor\",\"Classmate\",\"Vendor\",\"Family\",\"Friend\",\"Pickleball\"]},{\"name\":\"Relationship status\",\"type\":\"status\",\"options\":[\"Active\",\"Needs follow-up\",\"Waiting\",\"Dormant\"]},{\"name\":\"Last contact\",\"type\":\"date\"},{\"name\":\"Follow-up date\",\"type\":\"date\"},{\"name\":\"Projects\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-008\",\"inverseName\":\"Stakeholders\"},{\"name\":\"Actions\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-009\",\"inverseName\":\"People\"},{\"name\":\"Meetings & decisions\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-011\",\"inverseName\":\"Participants\"},{\"name\":\"Email / contact\",\"type\":\"email\"},{\"name\":\"Notes\",\"type\":\"text\"}]"
+        },
+        {
+          "key": "notion.database.views",
+          "value": "[{\"name\":\"Follow up now\",\"type\":\"table\",\"filter\":\"Relationship status is Needs follow-up or Follow-up date is on or before today\"},{\"name\":\"Work relationships\",\"type\":\"table\",\"filter\":\"Context contains Work\"},{\"name\":\"MBA network\",\"type\":\"table\",\"filter\":\"Context contains MBA\"}"
+        }
+      ],
+      "dependsOn": [
+        "action-008",
+        "action-009",
+        "action-010",
+        "action-011"
+      ]
+    },
+    {
+      "id": "action-019",
+      "operation": "configure",
+      "objectType": "notion.database",
+      "target": "Meetings & Decisions",
+      "description": "Configure meeting and decision records with linked people, projects, and actions.",
+      "properties": [
+        {
+          "key": "notion.database.properties",
+          "value": "[{\"name\":\"Meeting / Decision\",\"type\":\"title\"},{\"name\":\"Type\",\"type\":\"select\",\"options\":[\"Leadership meeting\",\"Customer meeting\",\"Investor meeting\",\"Hiring meeting\",\"Partnership meeting\",\"Decision\"]},{\"name\":\"Status\",\"type\":\"status\",\"options\":[\"Planned\",\"Held\",\"Decision pending\",\"Decided\",\"Closed\"]},{\"name\":\"Date\",\"type\":\"date\"},{\"name\":\"Participants\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-010\",\"inverseName\":\"Meetings & decisions\"},{\"name\":\"Projects\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-008\",\"inverseName\":\"Meetings & decisions\"},{\"name\":\"Follow-up actions\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-009\",\"inverseName\":\"Meetings & decisions\"},{\"name\":\"Decision\",\"type\":\"text\"},{\"name\":\"Rationale\",\"type\":\"text\"},{\"name\":\"Notes\",\"type\":\"text\"}]"
+        },
+        {
+          "key": "notion.database.views",
+          "value": "[{\"name\":\"Upcoming meetings\",\"type\":\"calendar\",\"dateProperty\":\"Date\",\"filter\":\"Status is Planned\"},{\"name\":\"Decisions pending\",\"type\":\"table\",\"filter\":\"Status is Decision pending\"},{\"name\":\"Recent decisions\",\"type\":\"table\",\"filter\":\"Type is Decision\",\"sort\":\"Date descending\"}"
+        }
+      ],
+      "dependsOn": [
+        "action-008",
+        "action-009",
+        "action-010",
+        "action-011"
+      ]
+    },
+    {
+      "id": "action-020",
+      "operation": "configure",
+      "objectType": "notion.database",
+      "target": "MBA Academic Hub",
+      "description": "Configure academic records, deadlines, people links, actions, and course-oriented views.",
+      "properties": [
+        {
+          "key": "notion.database.properties",
+          "value": "[{\"name\":\"Academic Item\",\"type\":\"title\"},{\"name\":\"Type\",\"type\":\"select\",\"options\":[\"Course\",\"Assignment\",\"Exam\",\"Group project\",\"Reading note\",\"Event\",\"Networking follow-up\"]},{\"name\":\"Status\",\"type\":\"status\",\"options\":[\"Planned\",\"In progress\",\"Waiting\",\"Submitted\",\"Completed\"]},{\"name\":\"Course\",\"type\":\"select\",\"options\":[\"Unassigned\"]},{\"name\":\"Due date\",\"type\":\"date\"},{\"name\":\"People\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-010\",\"inverseName\":\"Academic items\"},{\"name\":\"Actions\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-009\",\"inverseName\":\"Academic items\"},{\"name\":\"Deliverable / notes\",\"type\":\"text\"},{\"name\":\"Link\",\"type\":\"url\"}]"
+        },
+        {
+          "key": "notion.database.views",
+          "value": "[{\"name\":\"Academic deadlines\",\"type\":\"calendar\",\"dateProperty\":\"Due date\",\"filter\":\"Status is not Submitted and Status is not Completed\"},{\"name\":\"Courses\",\"type\":\"table\",\"filter\":\"Type is Course\"},{\"name\":\"Coursework\",\"type\":\"board\",\"groupBy\":\"Course\",\"filter\":\"Type is Assignment or Type is Exam or Type is Group project\"},{\"name\":\"Networking\",\"type\":\"table\",\"filter\":\"Type is Networking follow-up\"}"
+        }
+      ],
+      "dependsOn": [
+        "action-009",
+        "action-010",
+        "action-012"
+      ]
+    },
+    {
+      "id": "action-021",
+      "operation": "configure",
+      "objectType": "notion.database",
+      "target": "Wedding Planner",
+      "description": "Configure wedding planning records, budget/payment fields, people links, actions, and operational views.",
+      "properties": [
+        {
+          "key": "notion.database.properties",
+          "value": "[{\"name\":\"Wedding Item\",\"type\":\"title\"},{\"name\":\"Category\",\"type\":\"select\",\"options\":[\"Vendor\",\"Budget estimate\",\"Payment\",\"Guest\",\"Invitation\",\"Event\",\"Decision\",\"Deadline\",\"Open question\",\"Responsibility\"]},{\"name\":\"Status\",\"type\":\"status\",\"options\":[\"Not started\",\"Researching\",\"Waiting\",\"Confirmed\",\"Paid\",\"Done\",\"Canceled\"]},{\"name\":\"Due date\",\"type\":\"date\"},{\"name\":\"Budget estimate\",\"type\":\"number\",\"format\":\"currency\"},{\"name\":\"Payment amount\",\"type\":\"number\",\"format\":\"currency\"},{\"name\":\"People\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-010\",\"inverseName\":\"Wedding items\"},{\"name\":\"Actions\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-009\",\"inverseName\":\"Wedding items\"},{\"name\":\"Owner / responsibility\",\"type\":\"text\"},{\"name\":\"Contact / link\",\"type\":\"url\"},{\"name\":\"Notes\",\"type\":\"text\"}]"
+        },
+        {
+          "key": "notion.database.views",
+          "value": "[{\"name\":\"Next actions\",\"type\":\"table\",\"filter\":\"Status is not Done and Status is not Paid and Status is not Canceled\",\"sort\":\"Due date ascending\"},{\"name\":\"Vendors\",\"type\":\"table\",\"filter\":\"Category is Vendor\"},{\"name\":\"Budget and payments\",\"type\":\"table\",\"filter\":\"Category is Budget estimate or Category is Payment\"},{\"name\":\"Guests and invitations\",\"type\":\"table\",\"filter\":\"Category is Guest or Category is Invitation\"},{\"name\":\"Open questions\",\"type\":\"table\",\"filter\":\"Category is Open question and Status is not Done\"}"
+        }
+      ],
+      "dependsOn": [
+        "action-009",
+        "action-010",
+        "action-013"
+      ]
+    },
+    {
+      "id": "action-022",
+      "operation": "configure",
+      "objectType": "notion.database",
+      "target": "Personal Activities & Notes",
+      "description": "Configure personal records, improvement tracking, linked people/actions, and lifestyle views.",
+      "properties": [
+        {
+          "key": "notion.database.properties",
+          "value": "[{\"name\":\"Personal Item\",\"type\":\"title\"},{\"name\":\"Category\",\"type\":\"select\",\"options\":[\"Personal goal\",\"Pickleball game\",\"Pickleball practice\",\"Pickleball tournament\",\"Health routine\",\"Travel idea\",\"Book\",\"Note\"]},{\"name\":\"Status\",\"type\":\"status\",\"options\":[\"Planned\",\"Active\",\"Waiting\",\"Completed\",\"Archived\"]},{\"name\":\"Date\",\"type\":\"date\"},{\"name\":\"People\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-010\",\"inverseName\":\"Personal items\"},{\"name\":\"Actions\",\"type\":\"relation\",\"targetDatabaseActionId\":\"action-009\",\"inverseName\":\"Personal items\"},{\"name\":\"Improvement focus\",\"type\":\"text\"},{\"name\":\"Location\",\"type\":\"text\"},{\"name\":\"Rating / result\",\"type\":\"number\"},{\"name\":\"Notes\",\"type\":\"text\"}]"
+        },
+        {
+          "key": "notion.database.views",
+          "value": "[{\"name\":\"Personal goals\",\"type\":\"table\",\"filter\":\"Category is Personal goal and Status is not Completed\"},{\"name\":\"Pickleball\",\"type\":\"calendar\",\"dateProperty\":\"Date\",\"filter\":\"Category is Pickleball game or Category is Pickleball practice or Category is Pickleball tournament\"},{\"name\":\"Health\",\"type\":\"table\",\"filter\":\"Category is Health routine\"},{\"name\":\"Travel and reading\",\"type\":\"table\",\"filter\":\"Category is Travel idea or Category is Book\"}"
+        }
+      ],
+      "dependsOn": [
+        "action-009",
+        "action-010",
+        "action-014"
+      ]
+    },
+    {
+      "id": "action-023",
+      "operation": "configure",
+      "objectType": "notion.page",
+      "target": "CEO Home",
+      "description": "Add linked dashboard views that expose current work across all domains without duplicating records.",
+      "properties": [
+        {
+          "key": "notion.page.linkedViews",
+          "value": "[{\"databaseActionId\":\"action-009\",\"view\":\"Now\",\"section\":\"Today\"},{\"databaseActionId\":\"action-009\",\"view\":\"Blocked and waiting\",\"section\":\"Blocked\"},{\"databaseActionId\":\"action-009\",\"view\":\"Upcoming\",\"section\":\"Upcoming\"},{\"databaseActionId\":\"action-009\",\"view\":\"Follow-ups\",\"section\":\"Follow-ups\"},{\"databaseActionId\":\"action-008\",\"view\":\"Active priorities\",\"section\":\"Current priorities\"}]"
+        }
+      ],
+      "dependsOn": [
+        "action-001",
+        "action-008",
+        "action-009"
+      ]
+    },
+    {
+      "id": "action-024",
+      "operation": "configure",
+      "objectType": "notion.page",
+      "target": "Work & Leadership",
+      "description": "Add linked work-operating views.",
+      "properties": [
+        {
+          "key": "notion.page.linkedViews",
+          "value": "[{\"databaseActionId\":\"action-007\",\"view\":\"Current quarter\",\"section\":\"Goals\"},{\"databaseActionId\":\"action-008\",\"view\":\"Active priorities\",\"section\":\"Initiatives\"},{\"databaseActionId\":\"action-011\",\"view\":\"Decisions pending\",\"section\":\"Meetings and decisions\"},{\"databaseActionId\":\"action-010\",\"view\":\"Work relationships\",\"section\":\"Key relationships\"},{\"databaseActionId\":\"action-009\",\"view\":\"By domain\",\"section\":\"Open actions\",\"filterOverride\":\"Domain is Work\"}]"
+        }
+      ],
+      "dependsOn": [
+        "action-002",
+        "action-007",
+        "action-008",
+        "action-009",
+        "action-010",
+        "action-011"
+      ]
+    },
+    {
+      "id": "action-025",
+      "operation": "configure",
+      "objectType": "notion.page",
+      "target": "MBA at Wharton",
+      "description": "Add linked academic and networking views.",
+      "properties": [
+        {
+          "key": "notion.page.linkedViews",
+          "value": "[{\"databaseActionId\":\"action-012\",\"view\":\"Courses\",\"section\":\"Courses and deliverables\"},{\"databaseActionId\":\"action-012\",\"view\":\"Academic deadlines\",\"section\":\"Academic deadlines\"},{\"databaseActionId\":\"action-012\",\"view\":\"Networking\",\"section\":\"Networking follow-ups\"},{\"databaseActionId\":\"action-012\",\"view\":\"Coursework\",\"section\":\"Reading notes\",\"filterOverride\":\"Type is Reading note\"}]"
+        }
+      ],
+      "dependsOn": [
+        "action-003",
+        "action-012"
+      ]
+    },
+    {
+      "id": "action-026",
+      "operation": "configure",
+      "objectType": "notion.page",
+      "target": "Wedding",
+      "description": "Add linked wedding planning views.",
+      "properties": [
+        {
+          "key": "notion.page.linkedViews",
+          "value": "[{\"databaseActionId\":\"action-013\",\"view\":\"Next actions\",\"section\":\"Next actions\"},{\"databaseActionId\":\"action-013\",\"view\":\"Budget and payments\",\"section\":\"Budget and payments\"},{\"databaseActionId\":\"action-013\",\"view\":\"Vendors\",\"section\":\"Vendors\"},{\"databaseActionId\":\"action-013\",\"view\":\"Guests and invitations\",\"section\":\"Guests and invitations\"},{\"databaseActionId\":\"action-013\",\"view\":\"Open questions\",\"section\":\"Open questions\"}]"
+        }
+      ],
+      "dependsOn": [
+        "action-004",
+        "action-013"
+      ]
+    },
+    {
+      "id": "action-027",
+      "operation": "configure",
+      "objectType": "notion.page",
+      "target": "Personal Life",
+      "description": "Add linked personal activity and planning views.",
+      "properties": [
+        {
+          "key": "notion.page.linkedViews",
+          "value": "[{\"databaseActionId\":\"action-014\",\"view\":\"Personal goals\",\"section\":\"Personal goals\"},{\"databaseActionId\":\"action-014\",\"view\":\"Pickleball\",\"section\":\"Pickleball\"},{\"databaseActionId\":\"action-014\",\"view\":\"Health\",\"section\":\"Health\"},{\"databaseActionId\":\"action-014\",\"view\":\"Travel and reading\",\"section\":\"Travel\"},{\"databaseActionId\":\"action-014\",\"view\":\"Travel and reading\",\"section\":\"Books and notes\",\"filterOverride\":\"Category is Book or Category is Note\"}]"
+        }
+      ],
+      "dependsOn": [
+        "action-005",
+        "action-014"
+      ]
+    },
+    {
+      "id": "action-028",
+      "operation": "configure",
+      "objectType": "notion.page",
+      "target": "Weekly Review",
+      "description": "Add the linked views used for the weekly review and preserve the review checklist as page content.",
+      "properties": [
+        {
+          "key": "notion.page.linkedViews",
+          "value": "[{\"databaseActionId\":\"action-009\",\"view\":\"Blocked and waiting\",\"section\":\"Resolve blocked items\"},{\"databaseActionId\":\"action-009\",\"view\":\"Upcoming\",\"section\":\"Plan next 14 days\"},{\"databaseActionId\":\"action-009\",\"view\":\"Follow-ups\",\"section\":\"Schedule follow-ups\"},{\"databaseActionId\":\"action-007\",\"view\":\"At risk\",\"section\":\"Review completed work\"},{\"databaseActionId\":\"action-009\",\"view\":\"Now\",\"section\":\"Choose next actions\"}]"
+        }
+      ],
+      "dependsOn": [
+        "action-006",
+        "action-007",
+        "action-009"
+      ]
+    }
+  ],
+  "assumptions": [
+    "No existing databases or records are available for reuse beyond the approved Aurous Product HQ page.",
+    "The system should begin as a clean framework without seeded personal, company, academic, wedding, or contact records.",
+    "A unified Action Hub is preferred over separate task databases so weekly review and home-base views remain low-maintenance.",
+    "The approved parent page is intended to host this life-and-work system despite the discovery note that it is an Aurous product workspace.",
+    "The exact verified destination is Aurous Product HQ; its internal ID is embedded in every action.",
+    "Planning mode: natural-language intent; no preset was inferred."
+  ],
+  "warnings": [
+    "The supplied context does not include names for courses, people, wedding participants, vendors, or active projects, so no records or relationship links are proposed.",
+    "Some linked page views apply additional filters to a configured database view; these are display filters only and do not create duplicate records.",
+    "Aurous Product HQ exactly matches an existing Aurous workspace; use it only if extending the product workspace is intended.",
+    "Inspected database schemas contain relations among Milestone Tracker, Task Database, Bug Tracker, Technical Decisions Log, and Launch Checklist. The official MCP exposed related data-source IDs but did not expose exact owning property IDs for all relation properties, so no relation-property objects were emitted rather than inventing IDs."
+  ],
+  "destructiveActions": [],
+  "expectedResult": "A Notion-native life-and-work operating system under Aurous Product HQ: six landing pages, eight connected databases, focused domain views, one cross-domain action hub, and a weekly-review workflow. No changes are made during this planning phase."
+}

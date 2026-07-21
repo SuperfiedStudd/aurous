@@ -14,6 +14,7 @@ import {
 import { DynamicShellRenderer, type ShellTerminal } from '../src/core/shell-renderer.js';
 import { MockAgentAdapter } from '../src/adapters/agents/mock.js';
 import type { DestinationDiscovery } from '../src/domain/destinations.js';
+import { PASTED_CONTEXT_LABEL } from '../src/core/context.js';
 
 const presetPath = new URL('../demo/linear-build-week.json', import.meta.url);
 const WAIT = Symbol('wait');
@@ -21,19 +22,23 @@ const WAIT = Symbol('wait');
 class ScriptedTerminal implements ShellTerminal {
   readonly prompts: string[] = [];
   readonly writes: string[] = [];
-  readonly renderOptions;
   clearCount = 0;
   closeCount = 0;
   cancelCount = 0;
   private interrupt?: () => void;
-  private pending?: (value: undefined) => void;
+  private pending?: (value: string | undefined) => void;
+  columns: number;
 
   constructor(
     private readonly answers: Array<string | undefined | typeof WAIT>,
     readonly ansi = false,
-    readonly columns = 96,
+    columns = 96,
   ) {
-    this.renderOptions = { width: columns, color: false, unicode: false };
+    this.columns = columns;
+  }
+
+  get renderOptions() {
+    return { width: this.columns, color: false, unicode: false };
   }
 
   question(prompt: string): Promise<string | undefined> {
@@ -51,6 +56,8 @@ class ScriptedTerminal implements ShellTerminal {
 
   clear(): void {
     this.clearCount += 1;
+    if (this.ansi) this.writes.push('\u001b[2J\u001b[H');
+    else this.writes.push('\n');
   }
 
   close(): void {
@@ -75,6 +82,16 @@ class ScriptedTerminal implements ShellTerminal {
     this.interrupt?.();
   }
 
+  resolveWait(value: string | undefined): void {
+    const pending = this.pending;
+    delete this.pending;
+    pending?.(value);
+  }
+
+  resize(columns: number): void {
+    this.columns = columns;
+  }
+
   rendered(): string {
     return this.writes.join('');
   }
@@ -91,6 +108,49 @@ async function fixture(
     '{"name":"interactive-demo","description":"Interactive demo project"}\n',
   );
   await writeFile(path.join(workspace, 'linear.json'), await readFile(presetPath, 'utf8'));
+  const store = new LocalRunStore(workspace);
+  await store.init({ defaultAgent: 'mock', defaultTool: 'notion' });
+  const terminal = new ScriptedTerminal(answers, options.ansi ?? false, options.columns ?? 96);
+  const renderer = new DynamicShellRenderer(terminal);
+  const mock = new MockAgentAdapter();
+  const discovery = options.discovery;
+  const services = new AurousServices({
+    workspace,
+    store,
+    output: renderer,
+    progressIntervalMs: 1,
+    ...(discovery
+      ? {
+          agentFactory: () => ({
+            name: 'mock',
+            diagnose: () => mock.diagnose(),
+            discoverDestinations: () =>
+              Promise.resolve({
+                value: discovery,
+                command: ['mock-discovery'],
+                stdout: JSON.stringify(discovery),
+                stderr: '',
+                durationMs: 0,
+              }),
+            generatePlan: (input) => mock.generatePlan(input),
+            executePlan: (input) => mock.executePlan(input),
+            inspectRecovery: (input) => mock.inspectRecovery(input),
+            executeRecoveryAction: (input) => mock.executeRecoveryAction(input),
+            manualFallback: (directory, phase, prompt) =>
+              mock.manualFallback(directory, phase, prompt),
+          }),
+        }
+      : {}),
+  });
+  const shell = new AurousShell({ workspace, store, services, renderer });
+  return { workspace, store, terminal, renderer, services, shell };
+}
+
+async function emptyDirectoryFixture(
+  answers: Array<string | undefined | typeof WAIT>,
+  options: { ansi?: boolean; columns?: number; discovery?: DestinationDiscovery } = {},
+) {
+  const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-empty-'));
   const store = new LocalRunStore(workspace);
   await store.init({ defaultAgent: 'mock', defaultTool: 'notion' });
   const terminal = new ScriptedTerminal(answers, options.ansi ?? false, options.columns ?? 96);
@@ -407,7 +467,181 @@ describe('dynamic interactive Aurous shell', () => {
     expect(terminal.rendered()).not.toContain('MCP');
   });
 
-  it('refuses planning from a markerless launch directory without creating context', async () => {
+  it('keeps the interactive shell usable in an empty directory without a software project', async () => {
+    const { shell, terminal } = await emptyDirectoryFixture(['/help', '/status', '/exit']);
+
+    await shell.run();
+
+    expect(shell.snapshot()).toMatchObject({
+      contextPaths: [],
+      state: 'Ready',
+    });
+    expect(terminal.rendered()).toContain('No project selected');
+    expect(terminal.rendered()).toContain('context none');
+    expect(terminal.rendered()).toContain(
+      'No project detected. Run /context to paste notes or select files, then plan.',
+    );
+    expect(terminal.rendered()).toContain('Paste mode: /context  →  paste text  →  /done');
+    expect(terminal.rendered()).toContain('Session');
+    expect(terminal.rendered()).not.toContain('Aurous did not find a project in this directory');
+  });
+
+  it('captures inline context through /context paste mode ending with /done', async () => {
+    const { shell, terminal, renderer } = await emptyDirectoryFixture([
+      '/context',
+      'Launch a personal podcast planning workspace.',
+      'Track guests, episode drafts, and publish dates.',
+      '/done',
+      '/status',
+      '/exit',
+    ]);
+
+    await shell.run();
+
+    expect(shell.snapshot().contextPaths).toEqual([PASTED_CONTEXT_LABEL]);
+    expect(terminal.rendered()).toContain('No project selected');
+    expect(terminal.rendered()).toContain('context  pasted');
+    expect(terminal.rendered()).toContain('Paste plain-text context');
+    expect(terminal.rendered()).toContain('✓ Context pasted · 1 document');
+    expect(terminal.prompts.filter((prompt) => prompt.includes('context'))).toHaveLength(1);
+    expect(terminal.prompts.filter((prompt) => prompt === '')).toHaveLength(2);
+    expect(renderer.isPasteMode).toBe(false);
+  });
+
+  it('cancels paste mode on a standalone /cancel with one clean redraw', async () => {
+    const { shell, terminal, renderer } = await emptyDirectoryFixture(
+      ['/context', 'partial notes that should be discarded', '/cancel', '/status', '/exit'],
+      { ansi: true, columns: 80 },
+    );
+
+    await shell.run();
+
+    expect(shell.snapshot().contextPaths).toEqual([]);
+    expect(terminal.rendered()).toContain('Paste canceled.');
+    expect(terminal.rendered()).not.toContain('✓ Context pasted');
+    expect(terminal.clearCount).toBeGreaterThanOrEqual(1);
+    expect(renderer.isPasteMode).toBe(false);
+  });
+
+  it('keeps paste mode append-only for large multiline, wrapped, and rapid input', async () => {
+    const longLine = `Long context ${'word '.repeat(80)}end.`;
+    const rapidLines = Array.from({ length: 40 }, (_, index) => `rapid-line-${index}`);
+    const { shell, terminal, renderer } = await emptyDirectoryFixture(
+      ['/context', longLine, ...rapidLines, '/done', '/exit'],
+      { ansi: true, columns: 60 },
+    );
+
+    await shell.run();
+
+    expect(shell.snapshot().contextPaths).toEqual([PASTED_CONTEXT_LABEL]);
+    expect(terminal.prompts.filter((prompt) => prompt.includes('context'))).toHaveLength(1);
+    expect(terminal.prompts.filter((prompt) => prompt === '')).toHaveLength(41);
+    expect(terminal.clearCount).toBeGreaterThanOrEqual(1);
+    expect(renderer.isPasteMode).toBe(false);
+    expect(renderer.surfaceRenderCount).toBeGreaterThanOrEqual(2);
+    const rendered = terminal.rendered();
+    const pasteInstructionIndex = rendered.indexOf('Paste plain-text context');
+    const pasteExitClearIndex = rendered.indexOf('\u001b[2J\u001b[H', pasteInstructionIndex);
+    expect(pasteInstructionIndex).toBeGreaterThan(-1);
+    expect(pasteExitClearIndex).toBeGreaterThan(pasteInstructionIndex);
+    const midPaste = rendered.slice(pasteInstructionIndex, pasteExitClearIndex);
+    expect(midPaste).not.toContain('AUROUS · PRODUCTIVITY, RESOLVED.');
+    expect(midPaste).not.toContain('project No project selected');
+    expect(rendered).toContain('✓ Context pasted');
+    // Paste exit performs one full-screen clear + one header paint before the next composer prompt.
+    expect(rendered.slice(pasteExitClearIndex).match(/AUROUS · PRODUCTIVITY, RESOLVED\./g)?.length).toBeGreaterThanOrEqual(
+      1,
+    );
+  });
+
+  it('ignores terminal resize during paste and redraws once afterward', async () => {
+    const { shell, terminal, renderer } = await emptyDirectoryFixture(
+      ['/context', WAIT, '/done', '/exit'],
+      { ansi: true, columns: 100 },
+    );
+    const running = shell.run();
+    await vi.waitFor(() => expect(renderer.isPasteMode).toBe(true));
+    const paintsWhilePasting = renderer.surfaceRenderCount;
+    terminal.resize(40);
+    expect(terminal.columns).toBe(40);
+    expect(renderer.surfaceRenderCount).toBe(paintsWhilePasting);
+    terminal.resolveWait('notes after resize');
+    await running;
+
+    expect(shell.snapshot().contextPaths).toEqual([PASTED_CONTEXT_LABEL]);
+    expect(renderer.surfaceRenderCount).toBeGreaterThan(paintsWhilePasting);
+    expect(terminal.clearCount).toBeGreaterThanOrEqual(1);
+    expect(renderer.isPasteMode).toBe(false);
+  });
+
+  it('accepts file-based /context paths from a markerless directory', async () => {
+    const { shell, terminal, workspace } = await emptyDirectoryFixture([
+      '/context notes.md',
+      '/status',
+      '/exit',
+    ]);
+    await writeFile(
+      path.join(workspace, 'notes.md'),
+      '# Personal goals\nOrganize travel planning across Notion.\n',
+    );
+
+    await shell.run();
+
+    expect(shell.snapshot().contextPaths).toEqual(['notes.md']);
+    expect(terminal.rendered()).toContain('No project selected');
+    expect(terminal.rendered()).toContain('✓ Context notes.md · 1 files');
+    expect(terminal.rendered()).toContain('context  notes.md');
+  });
+
+  it('plans Notion from pasted context without a detected software project', async () => {
+    const discovery: DestinationDiscovery = {
+      integration: 'notion',
+      candidates: [
+        {
+          id: 'page-product-hq',
+          name: 'Aurous Product HQ',
+          kind: 'page',
+          description: 'stale deleted demo',
+          existingAurousMatch: true,
+        },
+      ],
+      existingObjects: [],
+      inspectedAt: '2026-07-19T12:00:00.000Z',
+      warnings: [],
+    };
+    const { shell, store, terminal, workspace } = await emptyDirectoryFixture(
+      [
+        '/context',
+        'Personal travel planning: flights, lodging, and packing checklist.',
+        '/done',
+        'Set up Notion for this travel plan',
+        'cancel',
+        '/exit',
+      ],
+      { discovery },
+    );
+
+    await shell.run();
+
+    const runs = await store.listRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.tool).toBe('notion');
+    expect(runs[0]?.status).toBe('planned');
+    const context = JSON.parse(
+      await readFile(path.join(workspace, '.aurous', 'runs', runs[0]!.runId, 'context.json'), 'utf8'),
+    ) as { documents: Array<{ content: string }>; summary: { fileCount: number } };
+    expect(context.summary.fileCount).toBe(1);
+    expect(context.documents[0]?.content).toContain('Personal travel planning');
+    expect(shell.snapshot().contextPaths).toEqual([PASTED_CONTEXT_LABEL]);
+    expect(terminal.rendered()).toContain('No project selected');
+    expect(terminal.rendered()).toContain('Plan ready');
+    expect(terminal.rendered()).toContain('Creating Life OS');
+    expect(terminal.rendered()).not.toContain('Where should Aurous build');
+    expect(terminal.rendered()).not.toContain('destination ›');
+    expect(terminal.rendered()).not.toContain('Aurous did not find a project in this directory');
+  });
+
+  it('refuses planning from a markerless directory until context is provided', async () => {
     const workspace = await mkdtemp(path.join(os.tmpdir(), 'aurous-no-project-'));
     const store = new LocalRunStore(workspace);
     await store.init({ defaultAgent: 'mock', defaultTool: 'linear' });
@@ -420,7 +654,7 @@ describe('dynamic interactive Aurous shell', () => {
 
     expect(terminal.rendered()).toContain('No project selected');
     expect(terminal.rendered()).toContain(
-      'Aurous did not find a project in this directory. Change into the project directory and launch Aurous again.',
+      'No planning context is selected. Run /context to paste notes, or /context <file-path> to select files.',
     );
     await expect(
       readFile(path.join(workspace, '.aurous', 'context.json'), 'utf8'),

@@ -3,14 +3,18 @@ import { formatExecutionResult, formatPlan } from '../src/core/output.js';
 import {
   formatApprovalPrompt,
   formatComposerPrompt,
+  formatContextPathsLabel,
   formatInteractiveHeader,
   formatOpeningHeader,
   formatProgress,
   progressWords,
   formatShellStatus,
   stripAnsi,
+  visibleDisplayWidth,
+  visibleWrappedRowCount,
 } from '../src/core/presentation.js';
 import type { AurousPlan, ExecutionResult } from '../src/domain/schemas.js';
+import { PASTED_CONTEXT_LABEL } from '../src/core/context.js';
 
 const plan: AurousPlan = {
   schemaVersion: 1,
@@ -216,6 +220,40 @@ describe('CLI presentation', () => {
     expect(Math.max(...rendered.split('\n').map((line) => line.length))).toBeLessThanOrEqual(
       Math.min(width, 108),
     );
+  });
+
+  it('summarizes pasted and multi-path context labels for the shell header', () => {
+    expect(formatContextPathsLabel([])).toBe('none');
+    expect(formatContextPathsLabel([PASTED_CONTEXT_LABEL])).toBe('pasted');
+    expect(formatContextPathsLabel(['notes.md'])).toBe('notes.md');
+    expect(formatContextPathsLabel(['docs/a.md', 'docs/b.md', 'docs/c.md'])).toBe('a.md, +2 more');
+    expect(
+      formatInteractiveHeader(
+        {
+          agent: 'mock',
+          model: 'built-in deterministic adapter',
+          target: 'notion',
+          mode: 'Interactive',
+          state: 'Ready',
+          project: 'No project selected',
+          contextPaths: [PASTED_CONTEXT_LABEL],
+        },
+        { width: 96, color: false, unicode: false },
+      ),
+    ).toContain('project No project selected  ·  context pasted');
+  });
+
+  it('calculates ANSI-safe visible display width and wrapped terminal rows', () => {
+    const styled = `\u001b[38;5;220m\u001b[1mcontext ›\u001b[0m `;
+    expect(visibleDisplayWidth(styled)).toBe(visibleDisplayWidth('context › '));
+    expect(visibleDisplayWidth(styled)).toBeLessThan(styled.length);
+    expect(visibleWrappedRowCount('short', 80)).toBe(1);
+    expect(visibleWrappedRowCount('a'.repeat(100), 40)).toBe(3);
+    expect(visibleWrappedRowCount(`${'a'.repeat(50)}\n${'b'.repeat(50)}`, 40)).toBe(4);
+    expect(visibleWrappedRowCount(styled + 'x'.repeat(70), 40)).toBe(
+      visibleWrappedRowCount(`context › ${'x'.repeat(70)}`, 40),
+    );
+    expect(visibleWrappedRowCount('', 40)).toBe(1);
   });
 
   it('uses only the approved one-word refinement vocabulary for progress states', () => {

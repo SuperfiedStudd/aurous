@@ -6,6 +6,8 @@ import {
   exactObjectTypeMatches,
   normalizedObjectType,
 } from './exact-bindings.js';
+import { ensureTrelloPersonalRootPlan } from './trello-onboarding.js';
+import { normalizeTrelloPlanCapabilities } from './trello-plan-capabilities.js';
 import type { ProductivityAdapter } from './types.js';
 
 /** Trello uses the shared destination contract; parent-scoped IDs keep same-named cards in different lists distinct. */
@@ -22,7 +24,11 @@ export class TrelloAdapter implements ProductivityAdapter {
       'Aurous cannot access a Trello workspace yet; reconnect Trello MCP and authorize a workspace, then try again.',
     recoveryMessage:
       'Reconnect the official Trello MCP and authorize a writable workspace. Aurous never needs a workspace ID from you.',
-    discoveryInstructions: `Use only the official Trello MCP and perform read-only calls. Prefer trelloReadWorkspace, trelloReadMember, trelloReadBoard, trelloReadList, trelloReadCard, trelloReadChecklist, and trelloSearch. Discover the authorized workspace and preserve its exact workspace ID and friendly name. Search and inspect boards, lists, cards, checklists, and board labels relevant to the project and objective. Put inspected boards, lists, cards, checklists, and labels in existingObjects with exact IDs, URLs when available, and parentId relationships (board→workspace, list→board, card→list, checklist→card, label→board). Mark existingAurousMatch only when an inspected board supports it. Never create, update, move, archive, or delete anything. Surface duplicate or similar-name risks in warnings. Do not invent label IDs.`,
+    discoveryInstructions: `Use only the official Trello MCP and perform read-only calls. Prefer trelloReadWorkspace, trelloReadMember, trelloReadBoard, trelloReadList, trelloReadCard, trelloReadChecklist, and trelloSearch. Discover authorized writable workspaces and preserve each exact workspace ID and friendly name. Omit deleted, archived, inaccessible, or read-only workspaces from candidates.
+
+For personal life/work onboarding, prefer the authenticated default workspace and search for an exact board matching the derived name such as "Life OS". Do NOT prefer unrelated product-demo boards such as "Aurous Launch HQ" unless the user explicitly names them. For software-project onboarding, also search for boards relevant to the project and objective.
+
+Inspect boards, lists, cards, checklists, and board labels relevant to the project and objective. Put inspected boards, lists, cards, checklists, and labels in existingObjects with exact IDs, URLs when available, and parentId relationships (board→workspace, list→board, card→list, checklist→card, label→board). Mark existingAurousMatch only when an inspected board supports it. Never create, update, move, archive, or delete anything. Surface duplicate or similar-name risks in warnings. Do not invent label IDs.`,
   } as const;
 
   rankDestinationCandidates(candidates: DestinationCandidate[]): DestinationCandidate[] {
@@ -45,8 +51,10 @@ TRELLO DEPENDENCY CONTRACT:
   }
 
   bindDestination(proposal: PlanProposal, destination: ResolvedDestination): PlanProposal {
-    const boundActions = proposal.plannedActions.map((action) => {
-      const parentId = resolveTrelloParentId(action, destination, proposal.plannedActions);
+    const withRoot = ensureTrelloPersonalRootPlan(proposal, destination);
+    const capabilityNormalized = normalizeTrelloPlanCapabilities(withRoot);
+    const boundActions = capabilityNormalized.plannedActions.map((action) => {
+      const parentId = resolveTrelloParentId(action, destination, capabilityNormalized.plannedActions);
       const matches = exactObjectMatches(destination, action, 'trello', parentId);
       const existing = matches.length === 1 ? matches[0] : undefined;
       const properties = action.properties.filter(
@@ -56,6 +64,7 @@ TRELLO DEPENDENCY CONTRACT:
             'trello.workspace',
             'trello.dedupe.knownExternalId',
             'trello.dedupe.knownUrl',
+            'trello.dedupe.skipReason',
           ].includes(property.key),
       );
       properties.push(
@@ -65,6 +74,9 @@ TRELLO DEPENDENCY CONTRACT:
       if (existing) {
         properties.push({ key: 'trello.dedupe.knownExternalId', value: existing.id });
         if (existing.url) properties.push({ key: 'trello.dedupe.knownUrl', value: existing.url });
+        if (action.operation === 'create') {
+          properties.push({ key: 'trello.dedupe.skipReason', value: 'already-exists' });
+        }
       }
       bindTrelloRelationshipIds(properties, destination, action);
       return {
@@ -77,15 +89,20 @@ TRELLO DEPENDENCY CONTRACT:
     });
 
     return {
-      ...proposal,
+      ...capabilityNormalized,
       plannedActions: boundActions,
       assumptions: [
-        ...proposal.assumptions,
+        ...capabilityNormalized.assumptions,
         `The exact verified Trello workspace is ${destination.name}; its internal ID is embedded in every action.`,
+        ...(destination.operatingRootName
+          ? [
+              `Operating board ${destination.operatingRootName} is selected automatically from the current request.`,
+            ]
+          : []),
       ],
       warnings: [
         ...new Set([
-          ...proposal.warnings,
+          ...capabilityNormalized.warnings,
           ...exactBindingWarnings(destination, boundActions, 'trello'),
           ...parentAmbiguityWarnings(destination, boundActions),
         ]),

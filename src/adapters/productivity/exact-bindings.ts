@@ -197,13 +197,20 @@ export function stampExactExternalId(
   namespace: ExactBindingNamespace,
   reuseVerb = 'Reuse or reconcile',
 ): PlanAction {
+  const priorSkipReason = propertyValue(action.properties, `${namespace}.dedupe.skipReason`);
   const properties = action.properties.filter(
     (property) =>
       property.key !== `${namespace}.dedupe.knownExternalId` &&
-      property.key !== `${namespace}.dedupe.knownUrl`,
+      property.key !== `${namespace}.dedupe.knownUrl` &&
+      property.key !== `${namespace}.dedupe.skipReason`,
   );
   properties.push({ key: `${namespace}.dedupe.knownExternalId`, value: existing.id });
   if (existing.url) properties.push({ key: `${namespace}.dedupe.knownUrl`, value: existing.url });
+  if (action.operation === 'create') {
+    properties.push({ key: `${namespace}.dedupe.skipReason`, value: 'already-exists' });
+  } else if (priorSkipReason) {
+    properties.push({ key: `${namespace}.dedupe.skipReason`, value: priorSkipReason });
+  }
   return {
     ...action,
     target: existing.name,

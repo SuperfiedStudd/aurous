@@ -8,6 +8,7 @@ export const DestinationSourceSchema = z.enum([
   'only-choice',
   'user-choice',
   'advanced-override',
+  'context-root-create',
 ]);
 export type DestinationSource = z.infer<typeof DestinationSourceSchema>;
 
@@ -86,6 +87,8 @@ export const ResolvedDestinationSchema = z.object({
   verifiedAt: z.string().datetime(),
   existingObjects: z.array(DiscoveredObjectSchema).default([]),
   discoveryWarnings: z.array(z.string()).default([]),
+  /** Human-readable project/base/board created or reused under a team/workspace destination. */
+  operatingRootName: z.string().min(1).optional(),
 });
 export type ResolvedDestination = z.infer<typeof ResolvedDestinationSchema>;
 

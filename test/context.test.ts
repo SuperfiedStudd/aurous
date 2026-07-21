@@ -2,11 +2,12 @@ import { mkdtemp, mkdir, readFile, realpath, symlink, writeFile } from 'node:fs/
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ingestContext } from '../src/core/context.js';
+import { ingestContext, ingestInlineContext, PASTED_CONTEXT_LABEL } from '../src/core/context.js';
 import {
   ContextPackStore,
   findProjectRoot,
   renderContextPackMarkdown,
+  resolveWorkspaceRoot,
 } from '../src/core/context-pack.js';
 
 describe('ingestContext', () => {
@@ -80,6 +81,32 @@ describe('ingestContext', () => {
     await expect(ingestContext({ cwd, paths: ['missing'] })).rejects.toMatchObject({
       code: 'AUR-CTX-002',
     });
+  });
+
+  it('builds a documentation bundle from pasted plain text without repository files', async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'aurous-inline-'));
+    const bundle = ingestInlineContext({
+      cwd,
+      content: 'Personal finance tracker goals and weekly review notes.',
+    });
+
+    expect(bundle.summary.fileCount).toBe(1);
+    expect(bundle.summary.files[0]?.category).toBe('documentation');
+    expect(bundle.summary.files[0]?.relativePath).toBe('pasted-context.md');
+    expect(bundle.documents[0]?.content).toContain('Personal finance tracker');
+    expect(PASTED_CONTEXT_LABEL).toBe('pasted');
+  });
+
+  it('rejects empty pasted context', () => {
+    expect(() =>
+      ingestInlineContext({ cwd: '/tmp', content: '   \n\t  ' }),
+    ).toThrowError(/Pasted context cannot be empty/);
+  });
+
+  it('uses the current directory as the workspace root when no project markers exist', async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'aurous-workspace-root-'));
+    expect(await findProjectRoot(cwd)).toBeUndefined();
+    expect(await resolveWorkspaceRoot(cwd)).toBe(await realpath(cwd));
   });
 
   it('refreshes bounded, deterministic project context and exports prompt-ready safe files', async () => {

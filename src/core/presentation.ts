@@ -1,4 +1,6 @@
+import path from 'node:path';
 import type { AgentName, ToolName } from '../domain/schemas.js';
+import { PASTED_CONTEXT_LABEL } from './context.js';
 
 export const progressWords = [
   'Assaying',
@@ -86,11 +88,31 @@ export function formatInteractiveHeader(
     'AUROUS · PRODUCTIVITY, RESOLVED.',
     '',
     `agent ${agentDisplayName(metadata.agent)}  ·  model ${metadata.model}  ·  target ${toolDisplayName(metadata.target)}${metadata.destination ? `  ·  destination ${metadata.destination}` : metadata.linearTeam ? `  ·  team ${metadata.linearTeam}` : ''}`,
-    `project ${metadata.project}  ·  context ${metadata.contextPaths.join(', ') || 'none'}`,
+    `project ${metadata.project}  ·  context ${formatContextPathsLabel(metadata.contextPaths)}`,
     `mode ${metadata.mode}  ·  state ${metadata.state ?? metadata.mode}${metadata.preset ? `  ·  preset ${metadata.preset}` : ''}`,
     ...(metadata.lastRunId ? [`run ${metadata.lastRunId}`] : []),
   ];
   return renderPanel('', lines, resolved, new Set(mark.map((_line, index) => index)));
+}
+
+/** Concise header/status label for selected planning context paths. */
+export function formatContextPathsLabel(contextPaths: string[]): string {
+  if (contextPaths.length === 0) return 'none';
+  if (contextPaths.length === 1 && contextPaths[0] === PASTED_CONTEXT_LABEL) return 'pasted';
+  if (contextPaths.length === 1) {
+    const only = contextPaths[0]!;
+    if (only.startsWith(`${PASTED_CONTEXT_LABEL} ·`)) return only;
+    return shortenContextPath(only);
+  }
+  if (contextPaths.length === 2)
+    return `${shortenContextPath(contextPaths[0]!)}, ${shortenContextPath(contextPaths[1]!)}`;
+  return `${shortenContextPath(contextPaths[0]!)}, +${contextPaths.length - 1} more`;
+}
+
+function shortenContextPath(value: string): string {
+  if (value === '.' || value === PASTED_CONTEXT_LABEL) return value;
+  const base = path.basename(value);
+  return base || value;
 }
 
 export function renderPanel(
@@ -161,7 +183,7 @@ export function formatShellStatus(
       `target   ${toolDisplayName(metadata.target)}  ·  mode ${metadata.mode}`,
       ...(metadata.state ? [`state    ${metadata.state}`] : []),
       `project  ${metadata.project}`,
-      `context  ${metadata.contextPaths.join(', ') || 'none'}`,
+      `context  ${formatContextPathsLabel(metadata.contextPaths)}`,
       ...(metadata.preset ? [`preset   ${metadata.preset}`] : []),
       ...(metadata.linearTeam && !metadata.destination ? [`team     ${metadata.linearTeam}`] : []),
       ...(metadata.destination ? [`location ${metadata.destination}`] : []),
@@ -198,6 +220,27 @@ export function formatPlainNotice(
 
 export function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g'), '');
+}
+
+/** Visible column width after stripping ANSI (ASCII/code-unit width). */
+export function visibleDisplayWidth(value: string): number {
+  return stripAnsi(value).length;
+}
+
+/**
+ * Terminal rows occupied when `value` is written at `columns` width.
+ * Uses stripped display width so ANSI styling does not inflate wrap counts.
+ */
+export function visibleWrappedRowCount(value: string, columns: number): number {
+  const width = Math.max(1, Math.floor(columns) || 1);
+  const plain = stripAnsi(value);
+  if (plain.length === 0) return 1;
+  let rows = 0;
+  for (const line of plain.split('\n')) {
+    const lineWidth = line.length;
+    rows += lineWidth === 0 ? 1 : Math.ceil(lineWidth / width);
+  }
+  return rows;
 }
 
 function resolveRenderOptions(options: RenderOptions): ResolvedRenderOptions {

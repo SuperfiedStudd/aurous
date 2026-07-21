@@ -1,0 +1,118 @@
+{
+  "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+  "destinationName": "Aurous Product HQ",
+  "existingObjects": [
+    {
+      "id": "3a4c0122-d292-819a-a6f4-e1a877e5a6a6",
+      "name": "CEO Home",
+      "type": "notion.page",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/3a4c0122d292819aa6f4e1a877e5a6a6"
+    },
+    {
+      "id": "3a4c0122-d292-81c5-a273-dc17e756eef2",
+      "name": "Work & Leadership",
+      "type": "notion.page",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/3a4c0122d29281c5a273dc17e756eef2"
+    },
+    {
+      "id": "3a4c0122-d292-81f5-9bc9-efb5f87baaf0",
+      "name": "MBA at Wharton",
+      "type": "notion.page",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/3a4c0122d29281f59bc9efb5f87baaf0"
+    },
+    {
+      "id": "3a4c0122-d292-81c4-aa03-c02ffac53498",
+      "name": "Wedding",
+      "type": "notion.page",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/3a4c0122d29281c4aa03c02ffac53498"
+    },
+    {
+      "id": "3a4c0122-d292-819e-bd4a-d9b428efdca0",
+      "name": "Personal Life",
+      "type": "notion.page",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/3a4c0122d292819ebd4ad9b428efdca0"
+    },
+    {
+      "id": "3a4c0122-d292-817c-a9f0-c47b3b991c17",
+      "name": "Weekly Review",
+      "type": "notion.page",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/3a4c0122d292817ca9f0c47b3b991c17"
+    },
+    {
+      "id": "8c0600d1-38cb-4daa-8f6a-b9ff03a540f9",
+      "name": "Goals & Outcomes",
+      "type": "notion.database",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/8c0600d138cb4daa8f6ab9ff03a540f9"
+    },
+    {
+      "id": "99123f7b-fd55-45ab-bf5a-2f1d060e9ef2",
+      "name": "Projects & Initiatives",
+      "type": "notion.database",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/99123f7bfd5545abbf5a2f1d060e9ef2"
+    },
+    {
+      "id": "9d335035-8b47-45e6-81ca-8d609d327143",
+      "name": "Action Hub",
+      "type": "notion.database",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/9d3350358b4745e681ca8d609d327143"
+    },
+    {
+      "id": "3cfc8695-c9db-44ed-8e13-15c7622520cb",
+      "name": "People & Relationships",
+      "type": "notion.database",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/3cfc8695c9db44ed8e1315c7622520cb"
+    },
+    {
+      "id": "1a9fddf0-50cd-4220-9efc-c6c9b08db71b",
+      "name": "Meetings & Decisions",
+      "type": "notion.database",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/1a9fddf050cd42209efcc6c9b08db71b"
+    },
+    {
+      "id": "17616252-2af3-43c1-ab7e-6d3b11da6d2f",
+      "name": "MBA Academic Hub",
+      "type": "notion.database",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/176162522af343c1ab7e6d3b11da6d2f"
+    },
+    {
+      "id": "4619bdb3-7de5-41cc-b066-a2bc140c17d9",
+      "name": "Wedding Planner",
+      "type": "notion.database",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/4619bdb37de541ccb066a2bc140c17d9"
+    },
+    {
+      "id": "35081885-d862-4c8e-a308-7c69886a456d",
+      "name": "Personal Activities & Notes",
+      "type": "notion.database",
+      "destinationId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "parentId": "3a2c0122-d292-8130-bde0-f68012dac01a",
+      "url": "https://app.notion.com/p/35081885d8624c8ea3087c69886a456d"
+    }
+  ]
+}

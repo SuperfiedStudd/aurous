@@ -119,6 +119,57 @@ export interface ContextIngestionOptions {
   maxFiles?: number;
 }
 
+export interface InlineContextOptions {
+  cwd: string;
+  content: string;
+  label?: string;
+  maxTotalBytes?: number;
+}
+
+/** Sentinel path label used when planning context was pasted into the shell. */
+export const PASTED_CONTEXT_LABEL = 'pasted';
+
+export function ingestInlineContext(options: InlineContextOptions): ContextBundle {
+  const content = options.content.replace(/\r\n/g, '\n').trimEnd();
+  if (!content.trim()) {
+    throw new AurousError({
+      code: 'AUR-CTX-001',
+      summary: 'Pasted context cannot be empty.',
+      probableCause: 'Paste mode finished without any plain-text content.',
+      nextAction: 'Run /context again, paste notes, then finish with /done.',
+    });
+  }
+  const maxTotalBytes = options.maxTotalBytes ?? 512 * 1024;
+  const bytes = Buffer.byteLength(content, 'utf8');
+  if (bytes > maxTotalBytes) {
+    throw new AurousError({
+      code: 'AUR-CTX-001',
+      summary: 'Pasted context exceeds the total context budget.',
+      probableCause: `The paste was ${bytes} bytes; the limit is ${maxTotalBytes} bytes.`,
+      nextAction: 'Paste a shorter note, or save the content to a file and use /context <file-path>.',
+    });
+  }
+  const relativePath = options.label ?? 'pasted-context.md';
+  const absolutePath = path.join(options.cwd, '.aurous', relativePath);
+  return {
+    summary: {
+      approvedPaths: [absolutePath],
+      files: [
+        {
+          path: absolutePath,
+          relativePath,
+          bytes,
+          category: 'documentation',
+        },
+      ],
+      fileCount: 1,
+      totalBytes: bytes,
+      skipped: [],
+    },
+    documents: [{ path: absolutePath, relativePath, content }],
+  };
+}
+
 export async function ingestContext(options: ContextIngestionOptions): Promise<ContextBundle> {
   if (options.paths.length === 0) {
     throw new AurousError({

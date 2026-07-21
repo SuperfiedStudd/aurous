@@ -25,6 +25,8 @@ import {
   discoveredIssueKey,
   isCanonicalLinearIssueIdentity,
 } from './linear-identity.js';
+import { ensureLinearPersonalRootPlan } from './linear-onboarding.js';
+import { normalizeLinearPlanCapabilities } from './linear-plan-capabilities.js';
 
 export class LinearAdapter implements ProductivityAdapter {
   readonly name = 'linear' as const;
@@ -38,7 +40,11 @@ export class LinearAdapter implements ProductivityAdapter {
     unavailableMessage:
       'Aurous cannot access a Linear team yet; ask a workspace admin to grant the connected account access, then try again.',
     recoveryMessage: 'Ask a Linear workspace admin to give the connected account access to a team.',
-    discoveryInstructions: `Use only the official Linear MCP and perform read-only calls. Discover every accessible team and preserve each exact team ID and friendly name. For each team, inspect matching projects, milestones, labels, and issues relevant to the supplied project name and objective.
+    discoveryInstructions: `Use only the official Linear MCP and perform read-only calls. Discover every accessible writable team and preserve each exact team ID and friendly name. Omit deleted, archived, inaccessible, or read-only teams from candidates.
+
+For personal life/work onboarding, prefer an active writable team and inspect an exact operating project matching the derived name such as "Life OS". Do NOT prefer unrelated product-demo projects such as "Aurous Project" unless the user explicitly names them. For software-project onboarding, also search for an existing exact or likely project match for the supplied project name.
+
+For each team, inspect matching projects, milestones, labels, and issues relevant to the supplied project name and objective.
 
 LINEAR ISSUE IDENTITY CONTRACT:
 - Official Linear MCP commonly exposes the human-readable issue key such as JAS-17 as the only stable fetchable issue identity.
@@ -61,9 +67,11 @@ LINEAR ISSUE IDENTITY CONTRACT:
   }
 
   bindDestination(proposal: PlanProposal, destination: ResolvedDestination): PlanProposal {
+    const withRoot = ensureLinearPersonalRootPlan(proposal, destination);
+    const capabilityNormalized = normalizeLinearPlanCapabilities(withRoot);
     return {
-      ...proposal,
-      plannedActions: proposal.plannedActions.map((action) => {
+      ...capabilityNormalized,
+      plannedActions: capabilityNormalized.plannedActions.map((action) => {
         const normalized = normalizeRelationAction(action, 'linear');
         const projectId = propertyValue(normalized.properties, 'linear.projectId');
         const existing = resolveExactObject(
@@ -117,13 +125,18 @@ LINEAR ISSUE IDENTITY CONTRACT:
         return bound;
       }),
       assumptions: [
-        ...proposal.assumptions,
+        ...capabilityNormalized.assumptions,
         `The exact verified Linear team is ${destination.name}; its internal ID is embedded in every action.`,
+        ...(destination.operatingRootName
+          ? [
+              `Operating project ${destination.operatingRootName} is selected automatically from the current request.`,
+            ]
+          : []),
       ],
       warnings: [
         ...new Set([
-          ...proposal.warnings,
-          ...exactBindingWarnings(destination, proposal.plannedActions),
+          ...capabilityNormalized.warnings,
+          ...exactBindingWarnings(destination, capabilityNormalized.plannedActions),
         ]),
       ],
     };

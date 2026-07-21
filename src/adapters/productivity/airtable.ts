@@ -15,6 +15,8 @@ import {
   hasTypedAirtableRelation,
   parseAirtableRelation,
 } from './airtable-relations.js';
+import { ensureAirtablePersonalRootPlan } from './airtable-onboarding.js';
+import { normalizeAirtablePlanCapabilities } from './airtable-plan-capabilities.js';
 import type { ProductivityAdapter } from './types.js';
 
 /** Airtable is intentionally expressed through the same generic destination contract as Notion and Linear. */
@@ -31,7 +33,11 @@ export class AirtableAdapter implements ProductivityAdapter {
       'Aurous cannot access a writable Airtable workspace yet; reconnect Airtable or ask a workspace admin for access, then try again.',
     recoveryMessage:
       'Reconnect Airtable and ensure the connected account can access a writable workspace. Aurous never needs a workspace ID from you.',
-    discoveryInstructions: `Use only the official Airtable MCP and perform read-only calls. List accessible workspaces, then bases in each workspace. Search for an exact existing base relevant to the supplied project and objective, including an exact requested base name when present. Inspect relevant bases, tables, fields, records, and interfaces when exposed. Return workspace candidates with exact workspace IDs. Put inspected bases, tables, fields, and records in existingObjects with exact IDs and parentId relationships. A base object's destinationId must be its workspace ID; table, field, and record objects must retain the workspace ID as destinationId and their exact base/table parent in parentId. Mark existingAurousMatch only when an inspected base supports it. Never create, update, delete, or configure anything. Surface duplicate or similar-name risks in warnings.`,
+    discoveryInstructions: `Use only the official Airtable MCP and perform read-only calls. List accessible writable workspaces, then bases in each workspace. Omit deleted, archived, inaccessible, or read-only workspaces from candidates.
+
+For personal life/work onboarding, prefer the authenticated default workspace and search for an exact base matching the derived name such as "Life OS". Do NOT prefer unrelated product-demo bases such as "Aurous Build Week HQ" or "Aurous Product HQ" unless the user explicitly names them. For software-project onboarding, also search for an exact existing base relevant to the supplied project and objective.
+
+Inspect relevant bases, tables, fields, records, and interfaces when exposed. Return workspace candidates with exact workspace IDs. Put inspected bases, tables, fields, and records in existingObjects with exact IDs and parentId relationships. A base object's destinationId must be its workspace ID; table, field, and record objects must retain the workspace ID as destinationId and their exact base/table parent in parentId. Mark existingAurousMatch only when an inspected base supports it. Never create, update, delete, or configure anything. Surface duplicate or similar-name risks in warnings.`,
   } as const;
 
   rankDestinationCandidates(candidates: DestinationCandidate[]): DestinationCandidate[] {
@@ -52,9 +58,11 @@ NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one 
   }
 
   bindDestination(proposal: PlanProposal, destination: ResolvedDestination): PlanProposal {
+    const withRoot = ensureAirtablePersonalRootPlan(proposal, destination);
+    const capabilityNormalized = normalizeAirtablePlanCapabilities(withRoot);
     return {
-      ...proposal,
-      plannedActions: proposal.plannedActions.map((action) => {
+      ...capabilityNormalized,
+      plannedActions: capabilityNormalized.plannedActions.map((action) => {
         const normalized = normalizeRelationAction(action, 'airtable');
         const parentId = propertyValue(normalized.properties, 'airtable.tableId');
         const existing = resolveExactObject(destination, normalized, 'airtable', parentId);
@@ -100,13 +108,18 @@ NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one 
         return bound;
       }),
       assumptions: [
-        ...proposal.assumptions,
+        ...capabilityNormalized.assumptions,
         `The exact verified Airtable workspace is ${destination.name}; its internal ID is embedded in every action.`,
+        ...(destination.operatingRootName
+          ? [
+              `Operating base ${destination.operatingRootName} is selected automatically from the current request.`,
+            ]
+          : []),
       ],
       warnings: [
         ...new Set([
-          ...proposal.warnings,
-          ...exactBindingWarnings(destination, proposal.plannedActions, 'airtable'),
+          ...capabilityNormalized.warnings,
+          ...exactBindingWarnings(destination, capabilityNormalized.plannedActions, 'airtable'),
         ]),
       ],
     };
