@@ -8,4 +8,5 @@ coverage/
 *.log
 .DS_Store
 *.tsbuildinfo
-
+.cursor/
+0001-Fix-bugs-found-in-full-code-audit-state-corruption-I.patch

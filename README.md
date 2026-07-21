@@ -1,61 +1,75 @@
-# Aurous
+# Aurous — Productivity Resolved
 
-**Aurous turns project context into a reviewed, ready-to-use productivity workspace—without asking you to learn each tool’s setup.**
+**Aurous is a developer tool for building safe agentic workflows across productivity platforms.** It turns repository, project, and personal context into a structured, human-reviewed Notion, Linear, Airtable, or Trello workspace—without asking people to learn each platform's setup or hand-copy opaque IDs.
 
-[Read the public Aurous guide](https://aurous-guide.superfiedstudd.chatgpt.site/) · [Judge quickstart](docs/JUDGE_GUIDE.md) · [Architecture](ARCHITECTURE.md)
+**Demo:** [watch Aurous in action](https://youtu.be/PQ555x5A6LM) · [Public product guide](https://aurous-guide.superfiedstudd.chatgpt.site/) · [Judge guide](docs/JUDGE_GUIDE.md)
 
-## The problem
+## For judges
 
-Starting a project workspace is slow and error-prone. You have to decide how to structure work, find the right destination, and manually create pages, issues, fields, or cards—often while copying IDs and hoping you do not create duplicates.
+- [Demo video](https://youtu.be/PQ555x5A6LM)
+- [Judge quickstart and mock demo](docs/JUDGE_GUIDE.md)
+- [Installation](#installation)
+- [Testing and verification](#testing-and-verification)
 
-Aurous is a local-first CLI that makes that process deliberate. It uses your project context and an existing local AI agent to prepare the workspace, while keeping every write visible and under your control.
+## The problem and solution
 
-## How Aurous works
+Creating a useful project workspace is usually slow, manual, and fragile: teams translate context into pages, issues, records, and cards while guessing at destinations and risking duplicate work. Aurous packages only approved local context, uses an already-authenticated local agent to propose a validated plan, and executes only after a human reviews and approves the exact actions. It is an orchestration CLI with durable local run artifacts—not a generic AI wrapper, credential broker, or direct productivity API client.
 
-For the persistent `aurous` command, install the package once from this repository:
+## What Aurous supports
+
+| Category | Supported |
+| --- | --- |
+| Productivity platforms | **Notion**, **Linear**, **Airtable**, **Trello** |
+| Local agents | **Codex**, **Claude Code** |
+| Safe evaluation | Built-in mock agent; no credentials, MCP connection, or external writes |
+
+Validated platform capabilities include Notion pages, databases, properties, relations, statuses, and views; Linear projects, milestones, issues, labels, priorities, and relationships; Airtable bases, tables, fields, records, and supported typed relationships; and Trello boards, lists, cards, checklists, and approved updates.
+
+## Core workflow
+
+```text
+context → plan → preview → approval → execution → structured results
+```
+
+1. **Context:** select bounded repository, project, or personal context.
+2. **Plan:** a local Codex or Claude Code agent returns a typed, validated plan.
+3. **Preview:** inspect every intended action before any external write.
+4. **Approval:** provide the explicit approval phrase yourself.
+5. **Execution:** Aurous allows only the saved, approved action IDs.
+6. **Structured results:** persist redacted diagnostics, exact external IDs, results, and recovery evidence locally under `.aurous/runs/`.
+
+## Architecture overview
+
+Aurous separates safety-critical responsibilities:
+
+- **Context layer** creates a bounded, user-approved Context Pack and preset state without collecting credentials.
+- **Agent adapters** invoke the existing local Codex or Claude Code CLI and validate structured output.
+- **Productivity adapters** supply platform-specific discovery, destination, exact-ID, and execution rules.
+- **Service and run-store layers** persist immutable plans, approval boundaries, action results, diagnostics, and recovery checkpoints.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for module boundaries, state transitions, recovery guarantees, and security invariants.
+
+## Installation
+
+Requires Node.js 20+ and npm. For live runs, install and authenticate either Codex CLI or Claude Code CLI, then configure the relevant productivity platform through that agent's MCP connection.
 
 ```bash
+git clone https://github.com/SuperfiedStudd/aurous.git
+cd aurous
 npm install
 npm run build
 npm link
 ```
 
-Start with the interactive shell:
+Start the persistent shell with `aurous`, or run it during development with:
 
 ```bash
-aurous
-# During development:
 npm run dev -- shell
 ```
 
-Then choose an agent and destination, provide context, and describe the outcome in plain language. Aurous follows one explicit path:
+## Quick start: no-auth mock demo
 
-```text
-project context → inspect workspace → plan → preview → approve → apply → safe rerun
-```
-
-1. **Project context** — Aurous reads only the paths you choose and makes a bounded Context Pack.
-2. **Inspect workspace** — it uses the connected integration read-only to find a safe destination.
-3. **Plan** — your local Codex or Claude Code creates a validated, saved plan.
-4. **Preview** — every intended write is shown before anything changes.
-5. **Approve** — you type the approval phrase yourself.
-6. **Apply** — Aurous executes only the saved plan.
-7. **Safe rerun** — exact compatible objects are reused or skipped; ambiguous matches stop instead of guessing.
-
-## Supported integrations
-
-The validated integrations are:
-
-- **Notion** — pages, databases, properties, relations, statuses, and views.
-- **Linear** — projects, milestones, issues, labels, priorities, and relationships.
-- **Airtable** — bases, tables, fields, records, and typed record relationships when supported by the connected MCP.
-- **Trello** — boards, lists, cards, checklists, and approved card updates.
-
-Use either a locally authenticated **Codex CLI** or **Claude Code CLI**. Aurous uses that existing local authentication; it does not collect, copy, or store AI or integration credentials.
-
-## 60-second local demo
-
-This mock run needs no external account, MCP connection, or credentials. From the Aurous repository:
+This complete workflow requires no external account or credentials:
 
 ```bash
 npm install
@@ -63,19 +77,15 @@ npm run build
 npm run dev -- init --agent mock --tool notion
 npm run dev -- plan --agent mock --tool notion --context . --prompt "Create a workspace that helps me manage this project"
 npm run dev -- runs
-```
-
-Copy the run ID printed by `plan`, then apply the previewed plan:
-
-```bash
+# Copy the run ID printed by plan, then:
 npm run dev -- apply <run-id> --yes
 ```
 
-The result is saved locally under `.aurous/runs/`. For a fuller judge path, see [docs/JUDGE_GUIDE.md](docs/JUDGE_GUIDE.md).
+The mock run saves a validated plan, preview, result, and redacted diagnostics under `.aurous/runs/`.
 
-## Live integration setup
+## Real integration demo
 
-For a live run, install and authenticate Codex CLI or Claude Code CLI, then configure the productivity tool’s MCP connection in that local agent. Aurous checks readiness before it plans:
+With an authenticated local agent and configured MCP connection, first verify readiness:
 
 ```bash
 aurous doctor --agent codex --verbose
@@ -83,49 +93,48 @@ aurous doctor --agent codex --verbose
 aurous doctor --agent claude --verbose
 ```
 
-When the doctor check is ready, open `aurous` and select your agent, target, and context. A scripted live plan uses the same explicit arguments:
+Then create a plan against a real platform. Review the generated plan and provide typed approval before applying it:
 
 ```bash
 aurous plan --agent codex --tool linear --context . --prompt "Set up a workspace for this project"
 ```
 
-Do not add workspace, page, team, board, record, or token IDs during normal onboarding. Aurous resolves one safe destination or presents friendly choices. The public guide explains the flow without exposing credentials.
+The same flow works with Notion, Airtable, and Trello by selecting the corresponding supported tool. Aurous resolves a safe destination or presents a choice; normal onboarding does not require users to supply workspace, page, team, board, record, or token IDs.
 
-## Safety and approval model
+## Safety and rerun behavior
 
-- **Inspect before writing:** destination discovery is read-only.
-- **Typed approval:** every saved plan is previewed; writes wait for explicit confirmation.
-- **Exact-ID binding:** existing objects are verified by their external IDs, never names alone.
-- **Duplicate prevention:** compatible exact matches are reused or skipped on rerun.
-- **Safe failure:** ambiguous, incompatible, or unverified matches stop visibly rather than expanding scope.
-- **Auditable results:** plans, previews, results, and redacted diagnostics are preserved locally in the run artifacts.
+- **Read before write:** destination discovery is read-only.
+- **Explicit approval:** saved plans are previewed and require a typed confirmation.
+- **Exact-ID tracking:** existing objects are verified by external ID rather than name alone.
+- **Rerun safety:** compatible exact matches are reused or skipped; ambiguity, incompatibility, or unverified state stops visibly.
+- **Recovery:** partial runs are inspected by exact ID before any separately approved recovery action.
+- **Local evidence:** immutable plans, results, checkpoints, and redacted diagnostics make every run auditable.
 
 ## How Codex and GPT-5.6 were used
 
-Codex accelerated Aurous from planning through packaging: it helped plan the CLI flow, implement adapters and safety boundaries, debug edge cases, analyze exact-ID behavior, and validate integrations. GPT-5.6 was used through the local agent workflow for structured planning and implementation assistance, debugging, safety analysis, and integration validation. Aurous still requires a human-reviewed plan and explicit approval before external writes.
+Codex and GPT-5.6 were used as development collaborators throughout Aurous—not as independent builders or decision makers. They helped design and implement the TypeScript CLI, the interactive shell and visual interface, the context and preset layer, and the Notion, Linear, Airtable, and Trello adapters. They were also used to debug integration and state-management failures; expand automated tests; run iterative test, diagnose, fix, and retest loops; improve exact-ID tracking, rerun safety, validation, recovery, and diagnostics; and build the supporting website and documentation.
 
-## Testing and validated results
+The project retains human-controlled architecture, review, and approval boundaries. It currently passes ESLint, TypeScript checks, **322 automated tests**, and the production build.
 
-Run the current automated suite with:
+## Testing and verification
+
+Run the complete verified suite:
 
 ```bash
-npm run lint
-npm run typecheck
-npm test
-npm run build
+npm run check
 ```
 
-The final packaging check passed **241 automated tests**. Live smoke validation has exercised Notion, Linear, Airtable, and Trello, including rerun behavior. The external smoke harness and preserved artifacts are described in [docs/JUDGE_GUIDE.md](docs/JUDGE_GUIDE.md).
+This runs ESLint, TypeScript type checking, Vitest, and the production TypeScript build. The project currently has 322 passing automated tests.
 
-## Supported platforms
+## Current limitations
 
-- macOS and Windows with Node.js 20+ and npm 10+.
-- A locally installed Codex CLI or Claude Code CLI for live runs.
-- Any of the four validated MCP-connected integrations listed above.
+- Live integrations depend on the user's locally configured MCP tools, agent authentication, and workspace permissions.
+- Agent planning relies on structured-schema compliance; invalid output fails visibly rather than being automatically repaired.
+- The local state store has no cross-process lock, so near-simultaneous applies can race.
+- A remote write that succeeds before its external ID is returned is treated as ambiguous and requires a fresh read-only inspection; Aurous will not replay it automatically.
 
-## Architecture links
+For the full operational caveats, see [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
 
-- [Architecture](ARCHITECTURE.md) — boundaries, plan/apply contracts, and integration model.
-- [Judge guide](docs/JUDGE_GUIDE.md) — fastest mock evaluation and optional live smoke path.
-- [Development guide](docs/DEVELOPMENT.md) — contributor commands and implementation notes.
-- [Known issues](docs/KNOWN_ISSUES.md) — current constraints and operational caveats.
+## License
+
+Released under the [MIT License](LICENSE).

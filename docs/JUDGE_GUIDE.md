@@ -57,4 +57,4 @@ python3 run_smoke.py --live --integration airtable
 
 ## Video
 
-Demo video: **placeholder — final submission URL to be added**.
+Demo video: https://youtu.be/PQ555x5A6LM
