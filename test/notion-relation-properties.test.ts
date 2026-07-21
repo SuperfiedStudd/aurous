@@ -4,12 +4,15 @@ import { bindNotionRelationProperty } from '../src/adapters/productivity/notion-
 import type { ResolvedDestination } from '../src/domain/destinations.js';
 import type { PlanAction, PlanProposal } from '../src/domain/schemas.js';
 
-const sourceId = '3a4c0122-d292-8162-942d-d7e059e89c41';
-const targetId = '3a4c0122-d292-8150-a6dc-f217cec2969e';
+const taskRecordId = '3a4c0122-d292-8162-942d-d7e059e89c41';
+const checklistRecordId = '3a4c0122-d292-8150-a6dc-f217cec2969e';
 const taskDbId = 'ed157dff-ae92-44cd-af58-a3225dee46d9';
 const checklistDbId = '6dfe13ba-b7d6-4aec-ae28-6c4e408b53a9';
-const milestonePropertyId = 'prop-milestone-task-db';
+const milestoneTrackerDbId = '7f965334-0f81-4d4c-966b-6b3d9d969fa2';
+const relatedTaskPropertyId = 'Related Task';
+const milestonePropertyId = 'aDpycQ';
 
+/** Sanitized fixture matching the live workspace: Related Task connects checklist→task. */
 const smokeDestination: ResolvedDestination = {
   integration: 'notion',
   id: '3a2c0122-d292-8130-bde0-f68012dac01a',
@@ -17,10 +20,10 @@ const smokeDestination: ResolvedDestination = {
   kind: 'page',
   source: 'existing-match',
   sourceDetail: 'Sanitized Notion smoke fixture.',
-  verifiedAt: '2026-07-21T01:25:39.000Z',
+  verifiedAt: '2026-07-21T02:19:34.000Z',
   existingObjects: [
     {
-      id: sourceId,
+      id: taskRecordId,
       name: 'Aurous Smoke 20260720T201226Z Record trailer episode',
       type: 'notion.record',
       destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
@@ -28,7 +31,7 @@ const smokeDestination: ResolvedDestination = {
       linkedIds: [],
     },
     {
-      id: targetId,
+      id: checklistRecordId,
       name: 'Aurous Smoke 20260720T201226Z Launch gate',
       type: 'notion.record',
       destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
@@ -50,85 +53,114 @@ const smokeDestination: ResolvedDestination = {
       identifier: 'collection://12d311ca-096e-4f82-8edd-2a438f8f4841',
     },
     {
+      id: milestoneTrackerDbId,
+      name: 'Milestone Tracker',
+      type: 'database',
+      destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
+      identifier: 'collection://d844db05-a088-4783-9e3c-ecfa2cb2acc1',
+    },
+    {
       id: milestonePropertyId,
       name: 'Milestone',
-      type: 'notion.property',
+      type: 'notion.relation_property',
       destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
       parentId: taskDbId,
       identifier: 'relation',
-      linkedIds: [checklistDbId],
+      linkedIds: [milestoneTrackerDbId, 'd844db05-a088-4783-9e3c-ecfa2cb2acc1'],
+    },
+    {
+      id: relatedTaskPropertyId,
+      name: 'Related Task',
+      type: 'notion.relation_property',
+      destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
+      parentId: checklistDbId,
+      identifier: 'relation',
+      linkedIds: [taskDbId, '74fc2fce-1fa1-481f-a412-4c2e405ada3e'],
     },
   ],
   discoveryWarnings: [],
 };
 
 describe('Notion discovered relation property binding', () => {
-  it('selects a discovered relation property instead of a planner-invented name', () => {
+  it('selects Related Task from schema instead of a planner-invented name', () => {
     const bound = bindNotionRelationProperty(
       relationAction({
         properties: [
           { key: 'notion.relation.name', value: 'Launch Checklist' },
-          { key: 'notion.relation.sourceRecordId', value: sourceId },
-          { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
+          { key: 'notion.relation.sourceRecordId', value: checklistRecordId },
+          { key: 'notion.relation.targetRecordIds', value: JSON.stringify([taskRecordId]) },
         ],
       }),
       smokeDestination,
     );
     expect(bound.properties).toEqual(
       expect.arrayContaining([
-        { key: 'notion.relation.name', value: 'Milestone' },
-        { key: 'notion.relation.propertyId', value: milestonePropertyId },
+        { key: 'notion.relation.name', value: 'Related Task' },
+        { key: 'notion.relation.propertyId', value: relatedTaskPropertyId },
       ]),
     );
   });
 
-  it('accepts Milestone linkedIds expressed as the Launch Checklist collection UUID', () => {
-    const checklistCollectionId = '12d311ca-096e-4f82-8edd-2a438f8f4841';
+  it('rejects Task→Launch gate via Milestone because Milestone targets Milestone Tracker', () => {
+    expect(() =>
+      bindNotionRelationProperty(
+        relationAction({
+          properties: [
+            { key: 'notion.relation.name', value: 'Milestone' },
+            { key: 'notion.relation.sourceRecordId', value: taskRecordId },
+            { key: 'notion.relation.targetRecordIds', value: JSON.stringify([checklistRecordId]) },
+          ],
+        }),
+        smokeDestination,
+      ),
+    ).toThrow(/No discovered Notion relation property/);
+  });
+
+  it('accepts Related Task linkedIds expressed as the Task Database collection UUID', () => {
+    const taskCollectionId = '74fc2fce-1fa1-481f-a412-4c2e405ada3e';
     const destination: ResolvedDestination = {
       ...smokeDestination,
       existingObjects: smokeDestination.existingObjects.map((object) =>
-        object.id === milestonePropertyId
-          ? { ...object, id: 'aDpycQ', linkedIds: [checklistCollectionId] }
-          : object,
+        object.id === relatedTaskPropertyId ? { ...object, linkedIds: [taskCollectionId] } : object,
       ),
     };
     const bound = bindNotionRelationProperty(
       relationAction({
         properties: [
-          { key: 'notion.relation.sourceRecordId', value: sourceId },
-          { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
+          { key: 'notion.relation.sourceRecordId', value: checklistRecordId },
+          { key: 'notion.relation.targetRecordIds', value: JSON.stringify([taskRecordId]) },
         ],
       }),
       destination,
     );
     expect(bound.properties).toEqual(
       expect.arrayContaining([
-        { key: 'notion.relation.name', value: 'Milestone' },
-        { key: 'notion.relation.propertyId', value: 'aDpycQ' },
+        { key: 'notion.relation.name', value: 'Related Task' },
+        { key: 'notion.relation.propertyId', value: relatedTaskPropertyId },
       ]),
     );
   });
 
-  it('uses Milestone in the sanitized smoke fixture through NotionAdapter.bindDestination', () => {
+  it('uses Related Task through NotionAdapter.bindDestination for the smoke fixture', () => {
     const adapter = new NotionAdapter();
     const bound = adapter.bindDestination(smokeProposal('Launch Checklist'), smokeDestination);
     const action = bound.plannedActions[0]!;
     expect(action.properties).toEqual(
       expect.arrayContaining([
-        { key: 'notion.relation.name', value: 'Milestone' },
-        { key: 'notion.relation.propertyId', value: milestonePropertyId },
-        { key: 'notion.dedupe.knownExternalId', value: sourceId },
-        { key: 'notion.relation.sourceRecordId', value: sourceId },
-        { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
+        { key: 'notion.relation.name', value: 'Related Task' },
+        { key: 'notion.relation.propertyId', value: relatedTaskPropertyId },
+        { key: 'notion.dedupe.knownExternalId', value: checklistRecordId },
+        { key: 'notion.relation.sourceRecordId', value: checklistRecordId },
+        { key: 'notion.relation.targetRecordIds', value: JSON.stringify([taskRecordId]) },
       ]),
     );
   });
 
-  it('fails safely when no discovered relation property exists', () => {
+  it('fails closed when zero relation properties accept the target database', () => {
     const destination: ResolvedDestination = {
       ...smokeDestination,
       existingObjects: smokeDestination.existingObjects.filter(
-        (object) => object.id !== milestonePropertyId,
+        (object) => object.id !== relatedTaskPropertyId,
       ),
     };
     expect(() =>
@@ -136,8 +168,8 @@ describe('Notion discovered relation property binding', () => {
         relationAction({
           properties: [
             { key: 'notion.relation.name', value: 'Launch Checklist' },
-            { key: 'notion.relation.sourceRecordId', value: sourceId },
-            { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
+            { key: 'notion.relation.sourceRecordId', value: checklistRecordId },
+            { key: 'notion.relation.targetRecordIds', value: JSON.stringify([taskRecordId]) },
           ],
         }),
         destination,
@@ -145,19 +177,19 @@ describe('Notion discovered relation property binding', () => {
     ).toThrow(/No discovered Notion relation property/);
   });
 
-  it('fails when multiple relation properties exist unless one exact discovered name matches', () => {
+  it('fails closed when multiple compatible relation properties are ambiguous', () => {
     const destination: ResolvedDestination = {
       ...smokeDestination,
       existingObjects: [
         ...smokeDestination.existingObjects,
         {
-          id: 'prop-secondary-task-db',
-          name: 'Secondary',
-          type: 'notion.property',
+          id: 'prop-alt-related',
+          name: 'Also Related',
+          type: 'notion.relation_property',
           destinationId: smokeDestination.id,
-          parentId: taskDbId,
+          parentId: checklistDbId,
           identifier: 'relation',
-          linkedIds: [checklistDbId],
+          linkedIds: [taskDbId],
         },
       ],
     };
@@ -165,75 +197,28 @@ describe('Notion discovered relation property binding', () => {
       bindNotionRelationProperty(
         relationAction({
           properties: [
-            { key: 'notion.relation.name', value: 'Launch Checklist' },
-            { key: 'notion.relation.sourceRecordId', value: sourceId },
-            { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
+            { key: 'notion.relation.sourceRecordId', value: checklistRecordId },
+            { key: 'notion.relation.targetRecordIds', value: JSON.stringify([taskRecordId]) },
           ],
         }),
         destination,
       ),
     ).toThrow(/ambiguous/i);
-
-    const exact = bindNotionRelationProperty(
-      relationAction({
-        properties: [
-          { key: 'notion.relation.name', value: 'Milestone' },
-          { key: 'notion.relation.sourceRecordId', value: sourceId },
-          { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
-        ],
-      }),
-      destination,
-    );
-    expect(exact.properties).toContainEqual({
-      key: 'notion.relation.propertyId',
-      value: milestonePropertyId,
-    });
-  });
-
-  it('fails safely when the relation targets a database the property does not accept', () => {
-    const destination: ResolvedDestination = {
-      ...smokeDestination,
-      existingObjects: [
-        ...smokeDestination.existingObjects,
-        {
-          id: 'foreign-record',
-          name: 'Foreign record',
-          type: 'notion.record',
-          destinationId: smokeDestination.id,
-          parentId: 'foreign-database',
-        },
-      ],
-    };
-    expect(() =>
-      bindNotionRelationProperty(
-        relationAction({
-          properties: [
-            { key: 'notion.relation.name', value: 'Milestone' },
-            { key: 'notion.relation.sourceRecordId', value: sourceId },
-            {
-              key: 'notion.relation.targetRecordIds',
-              value: JSON.stringify(['foreign-record']),
-            },
-          ],
-        }),
-        destination,
-      ),
-    ).toThrow(/No discovered Notion relation property/);
   });
 
   it('skips an already-satisfied relation after binding the discovered property', () => {
     const destination: ResolvedDestination = {
       ...smokeDestination,
       existingObjects: smokeDestination.existingObjects.map((object) =>
-        object.id === sourceId ? { ...object, linkedIds: [targetId] } : object,
+        object.id === checklistRecordId ? { ...object, linkedIds: [taskRecordId] } : object,
       ),
     };
     const adapter = new NotionAdapter();
     const bound = adapter.bindDestination(smokeProposal('Launch Checklist'), destination);
     expect(bound.plannedActions[0]?.properties).toEqual(
       expect.arrayContaining([
-        { key: 'notion.relation.name', value: 'Milestone' },
-        { key: 'notion.relation.propertyId', value: milestonePropertyId },
+        { key: 'notion.relation.name', value: 'Related Task' },
+        { key: 'notion.relation.propertyId', value: relatedTaskPropertyId },
         { key: 'notion.dedupe.skipReason', value: 'already-satisfied-relation' },
       ]),
     );
@@ -243,15 +228,15 @@ describe('Notion discovered relation property binding', () => {
     const destination: ResolvedDestination = {
       ...smokeDestination,
       existingObjects: [
-        ...smokeDestination.existingObjects.filter((object) => object.id !== milestonePropertyId),
+        ...smokeDestination.existingObjects.filter((object) => object.id !== relatedTaskPropertyId),
         {
-          id: 'prop-text-milestone',
-          name: 'Milestone',
+          id: 'prop-text-related',
+          name: 'Related Task',
           type: 'notion.property',
           destinationId: smokeDestination.id,
-          parentId: taskDbId,
+          parentId: checklistDbId,
           identifier: 'rich_text',
-          linkedIds: [checklistDbId],
+          linkedIds: [taskDbId],
         },
       ],
     };
@@ -259,9 +244,9 @@ describe('Notion discovered relation property binding', () => {
       bindNotionRelationProperty(
         relationAction({
           properties: [
-            { key: 'notion.relation.name', value: 'Milestone' },
-            { key: 'notion.relation.sourceRecordId', value: sourceId },
-            { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
+            { key: 'notion.relation.name', value: 'Related Task' },
+            { key: 'notion.relation.sourceRecordId', value: checklistRecordId },
+            { key: 'notion.relation.targetRecordIds', value: JSON.stringify([taskRecordId]) },
           ],
         }),
         destination,
@@ -275,8 +260,8 @@ function relationAction(overrides?: Partial<PlanAction>): PlanAction {
     id: 'action-001',
     operation: 'link',
     objectType: 'notion.database_record',
-    target: 'Aurous Smoke 20260720T201226Z Record trailer episode',
-    description: 'Relate trailer episode to launch gate.',
+    target: 'Aurous Smoke 20260720T201226Z Launch gate',
+    description: 'Relate launch gate to trailer episode.',
     properties: [],
     dependsOn: [],
     ...overrides,
@@ -290,16 +275,16 @@ function smokeProposal(relationName: string): PlanProposal {
       relationAction({
         properties: [
           { key: 'notion.destination.parentPageId', value: smokeDestination.id },
-          { key: 'notion.dedupe.knownExternalId', value: sourceId },
+          { key: 'notion.dedupe.knownExternalId', value: checklistRecordId },
           { key: 'notion.relation.name', value: relationName },
-          { key: 'notion.relation.sourceRecordId', value: sourceId },
-          { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
+          { key: 'notion.relation.sourceRecordId', value: checklistRecordId },
+          { key: 'notion.relation.targetRecordIds', value: JSON.stringify([taskRecordId]) },
         ],
       }),
     ],
     assumptions: [],
     warnings: [],
     destructiveActions: [],
-    expectedResult: 'Related via discovered property.',
+    expectedResult: 'Launch gate related to trailer episode.',
   };
 }

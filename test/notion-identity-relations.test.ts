@@ -16,8 +16,10 @@ import { AurousServices } from '../src/core/services.js';
 import type { DestinationDiscovery, ResolvedDestination } from '../src/domain/destinations.js';
 import type { PlanAction, PlanProposal } from '../src/domain/schemas.js';
 
-const sourceId = '3a4c0122-d292-8162-942d-d7e059e89c41';
-const targetId = '3a4c0122-d292-8150-a6dc-f217cec2969e';
+/** Launch gate (checklist) is the natural relation source via Related Task. */
+const sourceId = '3a4c0122-d292-8150-a6dc-f217cec2969e';
+/** Trailer episode (task) is the natural relation target. */
+const targetId = '3a4c0122-d292-8162-942d-d7e059e89c41';
 
 const notionDestination: ResolvedDestination = {
   integration: 'notion',
@@ -29,7 +31,7 @@ const notionDestination: ResolvedDestination = {
   verifiedAt: '2026-07-21T00:51:24.000Z',
   existingObjects: [
     {
-      id: sourceId,
+      id: targetId,
       name: 'Aurous Smoke 20260720T201226Z Record trailer episode',
       type: 'page',
       destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
@@ -37,7 +39,7 @@ const notionDestination: ResolvedDestination = {
       linkedIds: [],
     },
     {
-      id: targetId,
+      id: sourceId,
       name: 'Aurous Smoke 20260720T201226Z Launch gate',
       type: 'page',
       destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
@@ -45,13 +47,13 @@ const notionDestination: ResolvedDestination = {
       linkedIds: [],
     },
     {
-      id: 'prop-milestone-task-db',
-      name: 'Milestone',
-      type: 'notion.property',
+      id: 'Related Task',
+      name: 'Related Task',
+      type: 'notion.relation_property',
       destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
-      parentId: 'ed157dff-ae92-44cd-af58-a3225dee46d9',
+      parentId: '6dfe13ba-b7d6-4aec-ae28-6c4e408b53a9',
       identifier: 'relation',
-      linkedIds: ['6dfe13ba-b7d6-4aec-ae28-6c4e408b53a9'],
+      linkedIds: ['ed157dff-ae92-44cd-af58-a3225dee46d9'],
     },
   ],
   discoveryWarnings: [],
@@ -227,13 +229,13 @@ describe('Notion identity alias and relation normalization', () => {
       proposedWorkspaceStructure: [
         {
           kind: 'database_record',
-          name: 'Aurous Smoke 20260720T201226Z Record trailer episode',
-          purpose: 'Task.',
+          name: 'Aurous Smoke 20260720T201226Z Launch gate',
+          purpose: 'Gate.',
         },
         {
           kind: 'database_record',
-          name: 'Aurous Smoke 20260720T201226Z Launch gate',
-          purpose: 'Gate.',
+          name: 'Aurous Smoke 20260720T201226Z Record trailer episode',
+          purpose: 'Task.',
         },
       ],
       plannedActions: [
@@ -241,8 +243,8 @@ describe('Notion identity alias and relation normalization', () => {
           id: 'action-001',
           operation: 'update',
           objectType: 'notion.database_record',
-          target: 'Aurous Smoke 20260720T201226Z Record trailer episode',
-          description: 'Reuse exact task record.',
+          target: 'Aurous Smoke 20260720T201226Z Launch gate',
+          description: 'Reuse exact checklist record.',
           properties: [
             { key: 'notion.destination.parentPageId', value: destination.id },
             { key: 'notion.knownExternalId', value: sourceId },
@@ -253,8 +255,8 @@ describe('Notion identity alias and relation normalization', () => {
           id: 'action-002',
           operation: 'update',
           objectType: 'notion.database_record',
-          target: 'Aurous Smoke 20260720T201226Z Launch gate',
-          description: 'Reuse exact checklist record.',
+          target: 'Aurous Smoke 20260720T201226Z Record trailer episode',
+          description: 'Reuse exact task record.',
           properties: [
             { key: 'notion.destination.parentPageId', value: destination.id },
             { key: 'notion.dedupe.knownExternalId', value: targetId },
@@ -263,7 +265,7 @@ describe('Notion identity alias and relation normalization', () => {
         },
         relationAction({
           id: 'action-003',
-          target: 'Aurous Smoke 20260720T201226Z Record trailer episode',
+          target: 'Aurous Smoke 20260720T201226Z Launch gate',
           properties: [
             { key: 'notion.destination.parentPageId', value: destination.id },
             { key: 'notion.knownExternalId', value: sourceId },
@@ -290,7 +292,7 @@ describe('Notion identity alias and relation normalization', () => {
       agent: 'mock',
       tool: 'notion',
       contextPaths: ['.'],
-      objective: 'Reuse trailer episode and launch gate relation',
+      objective: 'Reuse launch gate and trailer episode relation',
     });
     const relation = planned.plannedActions.find((action) =>
       action.properties.some((property) => property.key === 'notion.relation.targetRecordIds'),
@@ -302,6 +304,7 @@ describe('Notion identity alias and relation normalization', () => {
     expect(relation?.properties).toEqual(
       expect.arrayContaining([
         { key: 'notion.dedupe.knownExternalId', value: sourceId },
+        { key: 'notion.relation.name', value: 'Related Task' },
         { key: 'notion.relation.sourceRecordId', value: sourceId },
         { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
       ]),
@@ -326,8 +329,8 @@ function relationAction(overrides?: Partial<PlanAction>): PlanAction {
     id: 'action-001',
     operation: 'update',
     objectType: 'notion.database_record_relation',
-    target: 'Aurous Smoke 20260720T201226Z Record trailer episode',
-    description: 'Relate trailer episode to launch gate. Do not delete anything.',
+    target: 'Aurous Smoke 20260720T201226Z Launch gate',
+    description: 'Relate launch gate to trailer episode. Do not delete anything.',
     properties: [],
     dependsOn: [],
     ...overrides,
@@ -339,34 +342,18 @@ function samePlanRelationProposal(): PlanProposal {
     proposedWorkspaceStructure: [
       {
         kind: 'record',
-        name: 'Aurous Smoke 20260720T201226Z Record trailer episode',
-        purpose: 'Task.',
+        name: 'Aurous Smoke 20260720T201226Z Launch gate',
+        purpose: 'Gate.',
       },
       {
         kind: 'record',
-        name: 'Aurous Smoke 20260720T201226Z Launch gate',
-        purpose: 'Gate.',
+        name: 'Aurous Smoke 20260720T201226Z Record trailer episode',
+        purpose: 'Task.',
       },
     ],
     plannedActions: [
       {
         id: 'action-001',
-        operation: 'create',
-        objectType: 'notion.record',
-        target: 'ed157dff-ae92-44cd-af58-a3225dee46d9',
-        description: 'Create trailer episode task. Do not delete anything.',
-        properties: [
-          { key: 'notion.destination.parentPageId', value: notionDestination.id },
-          { key: 'notion.databaseId', value: 'ed157dff-ae92-44cd-af58-a3225dee46d9' },
-          {
-            key: 'notion.record.title',
-            value: 'Aurous Smoke 20260720T201226Z Record trailer episode',
-          },
-        ],
-        dependsOn: [],
-      },
-      {
-        id: 'action-002',
         operation: 'create',
         objectType: 'notion.record',
         target: '6dfe13ba-b7d6-4aec-ae28-6c4e408b53a9',
@@ -382,10 +369,26 @@ function samePlanRelationProposal(): PlanProposal {
         dependsOn: [],
       },
       {
+        id: 'action-002',
+        operation: 'create',
+        objectType: 'notion.record',
+        target: 'ed157dff-ae92-44cd-af58-a3225dee46d9',
+        description: 'Create trailer episode task. Do not delete anything.',
+        properties: [
+          { key: 'notion.destination.parentPageId', value: notionDestination.id },
+          { key: 'notion.databaseId', value: 'ed157dff-ae92-44cd-af58-a3225dee46d9' },
+          {
+            key: 'notion.record.title',
+            value: 'Aurous Smoke 20260720T201226Z Record trailer episode',
+          },
+        ],
+        dependsOn: [],
+      },
+      {
         id: 'action-003',
         operation: 'link',
         objectType: 'notion.database_record',
-        target: 'Relate trailer episode to launch gate',
+        target: 'Relate launch gate to trailer episode',
         description: 'Relate the exact same-plan records. Do not delete anything.',
         properties: [
           { key: 'notion.destination.parentPageId', value: notionDestination.id },
