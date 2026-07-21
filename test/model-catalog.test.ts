@@ -10,16 +10,19 @@ vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return {
     ...actual,
-    execFileSync: vi.fn((file: string, args: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => {
-      const env = options?.env ?? process.env;
-      if (!env.PATH) throw Object.assign(new Error(`spawnSync ${file} ENOENT`), { code: 'ENOENT' });
-      if (file === 'codex') {
-        if (args.includes('--version')) return 'codex-cli 0.144.6\n';
-        if (args.includes('--help')) return 'Usage: codex [options]\n  exec   Run a task\n';
-        throw Object.assign(new Error('unknown command'), { status: 1 });
-      }
-      throw Object.assign(new Error(`spawnSync ${file} ENOENT`), { code: 'ENOENT' });
-    }),
+    execFileSync: vi.fn(
+      (file: string, args: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => {
+        const env = options?.env ?? process.env;
+        if (!env.PATH)
+          throw Object.assign(new Error(`spawnSync ${file} ENOENT`), { code: 'ENOENT' });
+        if (file === 'codex') {
+          if (args.includes('--version')) return 'codex-cli 0.144.6\n';
+          if (args.includes('--help')) return 'Usage: codex [options]\n  exec   Run a task\n';
+          throw Object.assign(new Error('unknown command'), { status: 1 });
+        }
+        throw Object.assign(new Error(`spawnSync ${file} ENOENT`), { code: 'ENOENT' });
+      },
+    ),
   };
 });
 

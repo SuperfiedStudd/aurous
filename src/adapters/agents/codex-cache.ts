@@ -150,10 +150,7 @@ export async function backupIncompatibleCodexModelsCache(
 ): Promise<{ backupPath: string }> {
   // Millisecond precision plus a random suffix so two repairs within the same second
   // (common on Windows) cannot collide on the rename target.
-  const stamp = now()
-    .toISOString()
-    .replace(/[-:]/g, '')
-    .replace(/\./g, '');
+  const stamp = now().toISOString().replace(/[-:]/g, '').replace(/\./g, '');
   const backupPath = `${cachePath}.aurous-backup-${stamp}-${randomBytes(4).toString('hex')}`;
   await rename(cachePath, backupPath);
   return { backupPath };

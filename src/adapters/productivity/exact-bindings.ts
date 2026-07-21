@@ -153,7 +153,11 @@ function notionCanonicalId(value: string): string | undefined {
  * must forward their tool, so a UUID-shaped non-Notion ID (e.g. a Linear issue UUID) is never
  * matched leniently across case/dash variants.
  */
-export function exactExternalIdMatches(candidate: string, persisted: string, tool?: ToolName): boolean {
+export function exactExternalIdMatches(
+  candidate: string,
+  persisted: string,
+  tool?: ToolName,
+): boolean {
   if (candidate === persisted) return true;
   if (tool !== 'notion') return false;
   const canonical = notionCanonicalId(candidate);
@@ -261,7 +265,8 @@ export function normalizeNullishProperties(
     // Identifier-typed keys carry an external ID; a sentinel like "none"/"n/a"/"-" means
     // "no relationship", so strip it rather than passing a literal sentinel into ID resolution at
     // execution. Value-bearing properties (titles, status) keep such literals — that was the bug.
-    if (isIdentifierPropertyKey(property.key) && isSentinelParentScope(property.value)) return false;
+    if (isIdentifierPropertyKey(property.key) && isSentinelParentScope(property.value))
+      return false;
     return true;
   });
 }

@@ -230,9 +230,9 @@ describe('AurousServices mock flow', () => {
     expect(card?.properties.find((property) => property.key === 'trello.listId')?.value).toBe(
       'list_build',
     );
-    expect(card?.properties.some((property) => property.key === 'trello.dedupe.knownExternalId')).toBe(
-      false,
-    );
+    expect(
+      card?.properties.some((property) => property.key === 'trello.dedupe.knownExternalId'),
+    ).toBe(false);
   });
 
   it('does not trust a prior Notion run bound to a different destination for exact-ID reuse', async () => {

@@ -737,7 +737,9 @@ describe('exact-ID binding for reuse, update, and relations', () => {
       relationAlreadySatisfied(existing, ['3a2c0122-d292-81ed-b4f6-eab2abb2f67c'], 'notion'),
     ).toBe(true);
     // No tool defaults to strict, so a dashless-vs-dashed pair must not match.
-    expect(relationAlreadySatisfied(existing, ['3a2c0122-d292-81ed-b4f6-eab2abb2f67c'])).toBe(false);
+    expect(relationAlreadySatisfied(existing, ['3a2c0122-d292-81ed-b4f6-eab2abb2f67c'])).toBe(
+      false,
+    );
   });
 
   it('keeps a UUID-shaped non-Notion relation strict across dash and case variants', () => {
@@ -748,9 +750,9 @@ describe('exact-ID binding for reuse, update, and relations', () => {
       destinationId: 'team',
       linkedIds: ['11111111-2222-4333-8444-555555555555'],
     };
-    expect(
-      relationAlreadySatisfied(existing, ['11111111222243338444555555555555'], 'linear'),
-    ).toBe(false);
+    expect(relationAlreadySatisfied(existing, ['11111111222243338444555555555555'], 'linear')).toBe(
+      false,
+    );
     expect(
       relationAlreadySatisfied(existing, ['11111111-2222-4333-8444-555555555555'], 'linear'),
     ).toBe(true);
@@ -758,7 +760,9 @@ describe('exact-ID binding for reuse, update, and relations', () => {
 
   it('keeps non-Notion external IDs case-sensitive while Notion UUIDs stay dash/case aware', () => {
     expect(exactExternalIdMatches('recAELdj1f2Fnp5gM', 'recAELdj1f2Fnp5gM', 'airtable')).toBe(true);
-    expect(exactExternalIdMatches('recAELdj1f2Fnp5gM', 'RECAELDJ1F2FNP5GM', 'airtable')).toBe(false);
+    expect(exactExternalIdMatches('recAELdj1f2Fnp5gM', 'RECAELDJ1F2FNP5GM', 'airtable')).toBe(
+      false,
+    );
     expect(
       exactExternalIdMatches(
         '3a2c0122-d292-81ed-b4f6-eab2abb2f67c',
