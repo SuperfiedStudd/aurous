@@ -87,7 +87,7 @@ export default function Home() {
           <h1>Aurous</h1>
           <p className="tagline">Productivity Resolved.</p>
           <p className="hero-intro">Aurous turns your context into a ready-to-use workspace. No structure to design, destination to select, or technical setup to learn first.</p>
-          <div className="hero-actions"><a className="button primary" href="#run">See the flow <span>→</span></a><a className="button secondary" href="#connect">Explore apps</a></div>
+          <div className="hero-actions"><a className="button primary" href="#run">See the flow <span>→</span></a><a className="button secondary" href="#connect">Explore apps</a><a className="button demo-button" href="https://youtu.be/PQ555x5A6LM" target="_blank" rel="noreferrer">Watch Demo <span aria-hidden="true">↗</span></a></div>
         </div>
         <div className="hero-mark reveal"><img src="/aurous-logo.png" alt="Two dark crystalline shards, outlined in fire" /></div>
         <div className="terminal hero-terminal reveal" aria-label="Aurous workflow preview">
@@ -100,6 +100,13 @@ export default function Home() {
         <div className="section-heading reveal"><p className="eyebrow">How it works</p><h2>From your context to a working app in four clear steps.</h2><p>Aurous handles the setup details, then shows you everything before it writes.</p></div>
         <div className="steps-grid">
           {["Add your context", "Ask Aurous to set up an app", "Review the complete preview", "Type apply"].map((title, i) => <article className="step reveal" key={title}><span>0{i + 1}</span><h3>{title}</h3><p>{["Share a folder, notes, or a short plain-language brief.", "Name Notion, Linear, Airtable, or Trello and describe the outcome.", "Every planned page, project, table, board, and task is shown before changes begin.", "Your typed approval turns the complete preview into the finished workspace."][i]}</p></article>)}
+        </div>
+      </section>
+
+      <section className="section demo-section" id="demo">
+        <div className="shell demo-layout">
+          <div className="section-heading reveal"><p className="eyebrow">See it in action</p><h2>Watch Aurous resolve a workspace.</h2><p>Follow the path from context to a complete, human-approved result.</p><a className="demo-link" href="https://youtu.be/PQ555x5A6LM" target="_blank" rel="noreferrer">Open demo on YouTube <span aria-hidden="true">↗</span></a></div>
+          <div className="demo-frame reveal"><iframe src="https://www.youtube-nocookie.com/embed/PQ555x5A6LM" title="Aurous demo video" loading="lazy" referrerPolicy="strict-origin-when-cross-origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowFullScreen /></div>
         </div>
       </section>
 
