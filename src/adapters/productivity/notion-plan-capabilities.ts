@@ -1,6 +1,7 @@
 import type { DiscoveredObject, ResolvedDestination } from '../../domain/destinations.js';
 import type { PlanAction, PlanProposal } from '../../domain/schemas.js';
 import { normalizedObjectType, propertyValue, setProperty } from './exact-bindings.js';
+import { normalizeNotionPlanPropertyEntries } from './notion-property-normalization.js';
 
 /**
  * Capability-aware Notion plan normalization for the official MCP path.
@@ -10,10 +11,13 @@ export function normalizeNotionPlanCapabilities(
   proposal: PlanProposal,
   destination: ResolvedDestination,
 ): PlanProposal {
+  proposal = normalizeNotionPlanPropertyEntries(proposal);
   const warnings: string[] = [];
   const assumptions: string[] = [];
   const createById = new Map(
-    proposal.plannedActions.filter((action) => action.operation === 'create').map((action) => [action.id, action]),
+    proposal.plannedActions
+      .filter((action) => action.operation === 'create')
+      .map((action) => [action.id, action]),
   );
   const plannedActions = proposal.plannedActions.map((action) =>
     normalizeNotionAction(action, createById, destination, warnings, assumptions),
@@ -51,9 +55,13 @@ function normalizeDatabasePropertiesAction(
   warnings: string[],
   assumptions: string[],
 ): PlanAction {
-  const rawProperties = parseJsonArray(propertyValue(action.properties, 'notion.database.properties'));
+  const rawProperties = parseJsonArray(
+    propertyValue(action.properties, 'notion.database.properties'),
+  );
   if (rawProperties.length === 0) return action;
-  const statusFallback = parseJsonArray(propertyValue(action.properties, 'notion.database.statuses'))
+  const statusFallback = parseJsonArray(
+    propertyValue(action.properties, 'notion.database.statuses'),
+  )
     .map((entry) => (isRecord(entry) && typeof entry.name === 'string' ? entry.name : undefined))
     .filter((name): name is string => Boolean(name));
   const owningCreateId = owningDatabaseCreateId(action, createById);
