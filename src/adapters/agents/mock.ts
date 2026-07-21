@@ -13,6 +13,10 @@ import {
   hasTypedAirtableRelation,
   materializeAirtableRelationAction,
 } from '../productivity/airtable-relations.js';
+import {
+  hasTypedNotionRelation,
+  materializeNotionRelationAction,
+} from '../productivity/notion-relations.js';
 
 export class MockAgentAdapter implements AgentAdapter {
   readonly name = 'mock' as const;
@@ -181,6 +185,28 @@ export class MockAgentAdapter implements AgentAdapter {
           type: materialized.objectType,
           name: materialized.target,
           reason: 'Mock resolved typed airtable.relation from exact approved action results.',
+          externalId,
+          url: `https://mock.aurous.local/${input.plan.runId}/${action.id}`,
+        });
+        resultIdByAction.set(action.id, externalId);
+        resultTypeByAction.set(action.id, materialized.objectType);
+        completedActionIds.push(action.id);
+        continue;
+      }
+
+      if (input.plan.tool === 'notion' && hasTypedNotionRelation(action)) {
+        const materialized = materializeNotionRelationAction(action, resultIdByAction, {
+          resultTypeByAction,
+        });
+        const externalId =
+          materialized.properties.find(
+            (property) => property.key === 'notion.dedupe.knownExternalId',
+          )?.value ?? `mock-${action.id}`;
+        skippedActions.push({
+          actionId: action.id,
+          type: materialized.objectType,
+          name: materialized.target,
+          reason: 'Mock resolved typed notion.relation from exact approved action results.',
           externalId,
           url: `https://mock.aurous.local/${input.plan.runId}/${action.id}`,
         });

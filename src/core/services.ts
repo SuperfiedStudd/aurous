@@ -25,6 +25,11 @@ import {
 } from '../adapters/productivity/linear-identity.js';
 import { validateLinearDiscoveryIssues } from '../adapters/productivity/linear.js';
 import {
+  hasTypedNotionRelation,
+  validateNotionRelationBinding,
+} from '../adapters/productivity/notion-relations.js';
+import { normalizeNotionKnownExternalIdAlias } from '../adapters/productivity/notion-identity.js';
+import {
   AgentNameSchema,
   AurousPlanSchema,
   ExecutionResultSchema,
@@ -320,8 +325,13 @@ export class AurousServices {
         toolName === 'airtable'
           ? materializeAirtableCompletedNoOpProposal(invocation.value, destination)
           : invocation.value;
+      const parsedProposal = PlanProposalSchema.parse(proposalValue);
+      const withPriorNotionIds =
+        toolName === 'notion'
+          ? await this.attachKnownNotionReferences(parsedProposal, objective, agentName)
+          : parsedProposal;
       const bound = PlanProposalSchema.parse(
-        productivity.bindDestination(PlanProposalSchema.parse(proposalValue), destination),
+        productivity.bindDestination(withPriorNotionIds, destination),
       );
       const proposal = PlanProposalSchema.parse({
         ...bound,
@@ -511,6 +521,83 @@ export class AurousServices {
     this.progress('Hallmarking', 'Validated plan saved to local run history.');
     this.dependencies.output.log(`\n${formatPlan(plan, { verbose: Boolean(options.verbose) })}`);
     return plan;
+  }
+
+  /**
+   * Fold Notion planner aliases using exact IDs from earlier successful runs for the same objective.
+   * Only IDs with persisted create/skip provenance are treated as prior-verified.
+   */
+  private async attachKnownNotionReferences(
+    proposal: ReturnType<typeof PlanProposalSchema.parse>,
+    objective: string,
+    agentName: string,
+  ): Promise<ReturnType<typeof PlanProposalSchema.parse>> {
+    const priorByExternalId = new Map<string, string>();
+    const records = (await this.dependencies.store.listRuns()).reverse();
+    for (const record of records) {
+      if (
+        record.tool !== 'notion' ||
+        record.agent !== agentName ||
+        record.status !== 'succeeded' ||
+        record.objective !== objective
+      )
+        continue;
+      try {
+        const result = await this.dependencies.store.loadResult(record.runId);
+        if (!result) continue;
+        for (const reference of [...result.createdObjects, ...(result.skippedActions ?? [])]) {
+          if (!reference.externalId || priorByExternalId.has(reference.externalId)) continue;
+          priorByExternalId.set(reference.externalId, record.runId);
+        }
+      } catch {
+        // A malformed or incomplete historical run is not trusted as an identity source.
+      }
+    }
+    if (priorByExternalId.size === 0) return proposal;
+
+    const priorVerifiedIds = new Set(priorByExternalId.keys());
+    const emptyDestination = {
+      integration: 'notion' as const,
+      id: 'prior-run',
+      name: 'prior-run',
+      kind: 'page' as const,
+      source: 'saved-project' as const,
+      sourceDetail: 'Prior successful Notion run identities.',
+      verifiedAt: new Date(0).toISOString(),
+      existingObjects: [],
+      discoveryWarnings: [],
+    };
+
+    return {
+      ...proposal,
+      plannedActions: proposal.plannedActions.map((action) => {
+        const next = normalizeNotionKnownExternalIdAlias(action, emptyDestination, {
+          priorVerifiedIds,
+        });
+        const known = next.properties.find(
+          (property) => property.key === 'notion.dedupe.knownExternalId',
+        )?.value;
+        if (!known) return next;
+        const sourceRunId = priorByExternalId.get(known);
+        if (!sourceRunId) return next;
+        return {
+          ...next,
+          properties: [
+            ...next.properties.filter(
+              (property) => property.key !== 'notion.dedupe.identitySource',
+            ),
+            {
+              key: 'notion.dedupe.identitySource',
+              value: `verified-run:${sourceRunId}`,
+            },
+          ],
+        };
+      }),
+      assumptions: [
+        ...proposal.assumptions,
+        'Exact external IDs from a compatible successful Aurous Notion run will be fetched and verified before any fallback lookup.',
+      ],
+    };
   }
 
   private async attachKnownLinearReferences(plan: AurousPlan, team: string): Promise<AurousPlan> {
@@ -1916,7 +2003,8 @@ function validateExactObjectAuthorizations(
   for (const action of proposal.plannedActions) {
     const knownId = action.properties.find((property) => property.key === exactKey)?.value;
     const typedAirtableRelation = tool === 'airtable' && hasTypedAirtableRelation(action);
-    if (requiresExactExistingId(action) && !knownId && !typedAirtableRelation) {
+    const typedNotionRelation = tool === 'notion' && hasTypedNotionRelation(action);
+    if (requiresExactExistingId(action) && !knownId && !typedAirtableRelation && !typedNotionRelation) {
       throw new AurousError({
         code: 'AUR-PLAN-009',
         summary: `Action ${action.id} (${action.objectType} ${JSON.stringify(action.target)}) proposes reuse or update without an exact external ID.`,
@@ -1973,7 +2061,14 @@ function validateExactObjectAuthorizations(
     if (tool === 'linear') validateLinearRelationshipIds(action, destination);
     if (tool === 'airtable')
       validateAirtableReferences(action, proposal.plannedActions, destination);
-    if (tool === 'notion') validateNotionRelationshipIds(action, destination);
+    if (tool === 'notion') {
+      validateNotionRelationBinding(
+        action,
+        proposal.plannedActions,
+        new Set(destination.existingObjects.map((object) => object.id)),
+      );
+      validateNotionRelationshipIds(action, destination);
+    }
     if (tool === 'trello') validateTrelloReferences(action, proposal.plannedActions, destination);
   }
 }
@@ -1982,6 +2077,10 @@ function validateNotionRelationshipIds(
   action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
   destination: ResolvedDestination,
 ): void {
+  if (hasTypedNotionRelation(action)) {
+    // Typed same-plan / mixed bindings are validated separately; exact IDs resolve at apply.
+    return;
+  }
   const targetIdsValue = action.properties.find(
     (property) =>
       property.key === 'notion.relation.targetRecordIds' ||
@@ -2360,6 +2459,7 @@ function requiresExactIdForLink(
   action: ReturnType<typeof PlanProposalSchema.parse>['plannedActions'][number],
 ): boolean {
   if (hasTypedAirtableRelation(action)) return false;
+  if (hasTypedNotionRelation(action)) return false;
   if (action.objectType.toLocaleLowerCase().includes('relation')) return true;
   return action.properties.some((property) =>
     [
@@ -2429,7 +2529,8 @@ function validateExecutablePlanDestination(plan: AurousPlan): void {
     if (
       requiresExactExistingId(action) &&
       !action.properties.some((property) => property.key.endsWith('.dedupe.knownExternalId')) &&
-      !(plan.tool === 'airtable' && hasTypedAirtableRelation(action))
+      !(plan.tool === 'airtable' && hasTypedAirtableRelation(action)) &&
+      !(plan.tool === 'notion' && hasTypedNotionRelation(action))
     ) {
       throw new AurousError({
         code: 'AUR-APPLY-005',

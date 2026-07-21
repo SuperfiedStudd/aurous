@@ -342,21 +342,35 @@ export function exactObjectTypeMatches(
   const discovered = normalizedObjectType(discoveredType);
   const planned = normalizedObjectType(actionType);
   if (discovered === planned) return true;
-  return tool === 'notion' && discovered === 'page' && planned === 'database_record';
+  if (tool !== 'notion') return false;
+  const notionRecords = new Set(['page', 'database_record', 'record']);
+  return notionRecords.has(discovered) && notionRecords.has(planned);
 }
 
 function normalizeNotionRelationAction(action: PlanAction): PlanAction {
+  const typedRelation = propertyValue(action.properties, 'notion.relation');
+  if (typedRelation?.trim().startsWith('{')) {
+    return {
+      ...action,
+      operation: action.operation === 'create' ? 'update' : action.operation,
+      objectType: 'notion.database_record',
+      properties: normalizeNullishProperties(action.properties),
+    };
+  }
+
   const kind = normalizedObjectType(action.objectType);
   const sourceId =
     propertyValue(action.properties, 'notion.relation.sourceRecordId') ??
-    propertyValue(action.properties, 'notion.dedupe.knownExternalId');
+    propertyValue(action.properties, 'notion.dedupe.knownExternalId') ??
+    propertyValue(action.properties, 'notion.knownExternalId');
   const targetId =
     propertyValue(action.properties, 'notion.relation.targetRecordId') ??
     propertyValue(action.properties, 'notion.relation.targetRecordIds');
   const isRelationShape =
     action.objectType.toLocaleLowerCase().includes('relation') ||
-    (Boolean(sourceId) && Boolean(propertyValue(action.properties, 'notion.relation.name')));
-  if (!isRelationShape && kind !== 'database_record') return action;
+    (Boolean(sourceId) && Boolean(propertyValue(action.properties, 'notion.relation.name'))) ||
+    Boolean(targetId);
+  if (!isRelationShape && kind !== 'database_record' && kind !== 'record') return action;
   if (!sourceId) return action;
 
   const properties = action.properties.filter(
@@ -416,6 +430,8 @@ function structuredCandidateIds(action: PlanAction, tool: ToolName): string[] {
   if (tool === 'notion') {
     return compact([
       propertyValue(action.properties, 'notion.relation.sourceRecordId'),
+      propertyValue(action.properties, 'notion.dedupe.knownExternalId'),
+      propertyValue(action.properties, 'notion.knownExternalId'),
       propertyValue(action.properties, 'notion.pageId'),
       propertyValue(action.properties, 'notion.recordId'),
     ]);
