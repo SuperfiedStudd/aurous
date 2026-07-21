@@ -55,7 +55,7 @@ export function bindNotionRelationProperty(
   }
 
   const candidates = discoveredRelationProperties(destination, sourceDatabaseId).filter(
-    (property) => relationPropertyAcceptsTargets(property, targetDatabaseIds),
+    (property) => relationPropertyAcceptsTargets(property, targetDatabaseIds, destination),
   );
 
   const requestedName =
@@ -166,10 +166,42 @@ function selectRelationProperty(
 function relationPropertyAcceptsTargets(
   property: DiscoveredObject,
   targetDatabaseIds: ReadonlySet<string>,
+  destination: ResolvedDestination,
 ): boolean {
   const related = property.linkedIds ?? [];
   if (related.length === 0) return false;
-  return [...targetDatabaseIds].every((databaseId) => related.includes(databaseId));
+  const accepted = new Set(related.map(normalizeNotionIdentity).filter(Boolean));
+  for (const databaseId of targetDatabaseIds) {
+    const aliases = databaseIdentityAliases(destination, databaseId);
+    if (![...aliases].some((alias) => accepted.has(alias))) return false;
+  }
+  return true;
+}
+
+/** Match related DB page IDs and Notion data-source / collection UUIDs. */
+function databaseIdentityAliases(
+  destination: ResolvedDestination,
+  databaseId: string,
+): Set<string> {
+  const aliases = new Set<string>([normalizeNotionIdentity(databaseId)].filter(Boolean));
+  const database = destination.existingObjects.find((object) => object.id === databaseId);
+  if (!database) return aliases;
+  aliases.add(normalizeNotionIdentity(database.id));
+  const collectionId = collectionIdFromIdentifier(database.identifier);
+  if (collectionId) aliases.add(collectionId);
+  return aliases;
+}
+
+function collectionIdFromIdentifier(identifier: string | null | undefined): string | undefined {
+  if (!identifier) return undefined;
+  const trimmed = identifier.trim();
+  const match = /^collection:\/\/([0-9a-f-]{36})$/i.exec(trimmed);
+  if (match?.[1]) return normalizeNotionIdentity(match[1]);
+  return normalizeNotionIdentity(trimmed) || undefined;
+}
+
+function normalizeNotionIdentity(value: string | null | undefined): string {
+  return (value ?? '').trim().toLocaleLowerCase().replace(/-/g, '');
 }
 
 function isNotionRelationAction(action: PlanAction): boolean {

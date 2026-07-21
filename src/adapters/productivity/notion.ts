@@ -39,7 +39,7 @@ For every inspected database that may participate in relations, fetch its schema
 - type "notion.property" (or "notion.relation_property")
 - identifier "relation" (the Notion property type; never text/select/status)
 - parentId set to the exact owning database ID
-- linkedIds set to the exact related database ID(s) that property can target
+- linkedIds set to the exact related database page ID(s) and/or data-source/collection UUID(s) that property can target (include both when MCP returns both forms)
 - id set to the exact property ID when the MCP returns one
 Never invent property names. Never create, update, move, archive, or delete anything.`,
   } as const;
@@ -54,7 +54,7 @@ Never invent property names. Never create, update, move, archive, or delete anyt
   destinationPlanningInstructions(destination: ResolvedDestination): string {
     return `The exact approved Notion parent is ${JSON.stringify(destination.id)} (${destination.name}). Put ${this.destination.exactIdProperty}=${JSON.stringify(destination.id)} on every action. Existing objects listed in the discovery snapshot may be reused only by their supplied exact IDs.
 
-RELATION UPDATES: For records that already exist in discovery, emit an update/link on objectType notion.database_record with notion.dedupe.knownExternalId (never notion.knownExternalId alone), notion.relation.sourceRecordId, and notion.relation.targetRecordIds as a JSON array of exact related record IDs. Choose the source record so its parent database owns a discovered relation-typed property (identifier="relation") whose linkedIds include the target record's parent database. Set notion.relation.name only to that exact discovered property name (for example Related Task or Milestone when those are inspected); never invent a property name from a related database title. Prefer also binding notion.relation.propertyId when discovery supplied the property ID. Never authorize a mutation from a sentence that merely embeds IDs.
+RELATION UPDATES: For records that already exist in discovery, emit an update/link on objectType notion.database_record with notion.dedupe.knownExternalId (never notion.knownExternalId alone), notion.relation.sourceRecordId, and notion.relation.targetRecordIds as a JSON array of exact related record IDs. When the objective names exact source and target record IDs, preserve that direction. Otherwise choose the source record so its parent database owns a discovered relation-typed property (identifier="relation") whose linkedIds include the target record's parent database. Set notion.relation.name only to that exact discovered property name; never invent a property name from a related database title. Prefer also binding notion.relation.propertyId when discovery supplied the property ID. Never authorize a mutation from a sentence that merely embeds IDs.
 
 SAME-PLAN RELATIONS: When the source or related records are created earlier in this same immutable plan, do not invent future IDs and do not write \${action.output} strings. Authorize a typed dependency on property notion.relation as JSON: {"source":{"recordActionId":"action-00N"},"targets":[{"recordActionId":"action-00M"}]} (baseActionId is equivalent). Include "name" only when it is an exact discovered relation property name. Exact discovered records use {"recordId":"<uuid>"}. Put every referenced create/reuse action in dependsOn. Planning authorizes only the typed dependency; apply resolves exact record IDs from that approved action's persisted result.
 

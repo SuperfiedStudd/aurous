@@ -36,6 +36,20 @@ const smokeDestination: ResolvedDestination = {
       linkedIds: [],
     },
     {
+      id: taskDbId,
+      name: 'Task Database',
+      type: 'database',
+      destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
+      identifier: 'collection://74fc2fce-1fa1-481f-a412-4c2e405ada3e',
+    },
+    {
+      id: checklistDbId,
+      name: 'Launch Checklist',
+      type: 'database',
+      destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
+      identifier: 'collection://12d311ca-096e-4f82-8edd-2a438f8f4841',
+    },
+    {
       id: milestonePropertyId,
       name: 'Milestone',
       type: 'notion.property',
@@ -64,6 +78,33 @@ describe('Notion discovered relation property binding', () => {
       expect.arrayContaining([
         { key: 'notion.relation.name', value: 'Milestone' },
         { key: 'notion.relation.propertyId', value: milestonePropertyId },
+      ]),
+    );
+  });
+
+  it('accepts Milestone linkedIds expressed as the Launch Checklist collection UUID', () => {
+    const checklistCollectionId = '12d311ca-096e-4f82-8edd-2a438f8f4841';
+    const destination: ResolvedDestination = {
+      ...smokeDestination,
+      existingObjects: smokeDestination.existingObjects.map((object) =>
+        object.id === milestonePropertyId
+          ? { ...object, id: 'aDpycQ', linkedIds: [checklistCollectionId] }
+          : object,
+      ),
+    };
+    const bound = bindNotionRelationProperty(
+      relationAction({
+        properties: [
+          { key: 'notion.relation.sourceRecordId', value: sourceId },
+          { key: 'notion.relation.targetRecordIds', value: JSON.stringify([targetId]) },
+        ],
+      }),
+      destination,
+    );
+    expect(bound.properties).toEqual(
+      expect.arrayContaining([
+        { key: 'notion.relation.name', value: 'Milestone' },
+        { key: 'notion.relation.propertyId', value: 'aDpycQ' },
       ]),
     );
   });
