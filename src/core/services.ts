@@ -357,7 +357,12 @@ export class AurousServices {
       const parsedProposal = PlanProposalSchema.parse(proposalValue);
       const withPriorNotionIds =
         toolName === 'notion'
-          ? await this.attachKnownNotionReferences(parsedProposal, objective, agentName)
+          ? await this.attachKnownNotionReferences(
+              parsedProposal,
+              objective,
+              agentName,
+              destination.id,
+            )
           : parsedProposal;
       const bound = PlanProposalSchema.parse(
         productivity.bindDestination(withPriorNotionIds, destination),
@@ -565,6 +570,7 @@ export class AurousServices {
     proposal: ReturnType<typeof PlanProposalSchema.parse>,
     objective: string,
     agentName: string,
+    destinationId: string,
   ): Promise<ReturnType<typeof PlanProposalSchema.parse>> {
     const priorByExternalId = new Map<string, string>();
     const records = (await this.dependencies.store.listRuns()).reverse();
@@ -577,8 +583,14 @@ export class AurousServices {
       )
         continue;
       try {
-        const result = await this.dependencies.store.loadResult(record.runId);
-        if (!result) continue;
+        const [priorPlan, result] = await Promise.all([
+          this.dependencies.store.loadPlan(record.runId),
+          this.dependencies.store.loadResult(record.runId),
+        ]);
+        // Only reuse identities from a prior run bound to the SAME Notion parent.
+        // A `verified-run:` stamp bypasses current-inspection, so a foreign
+        // workspace's IDs must never enter this plan (mirrors the Linear team guard).
+        if (!result || notionPlanDestination(priorPlan) !== destinationId) continue;
         for (const reference of [...result.createdObjects, ...(result.skippedActions ?? [])]) {
           if (!reference.externalId || priorByExternalId.has(reference.externalId)) continue;
           priorByExternalId.set(reference.externalId, record.runId);
@@ -923,6 +935,7 @@ export class AurousServices {
         destructiveActionCount: plan.destructiveActions.length,
       },
     );
+    let savedResultStatus: ExecutionResult['status'] | undefined;
     try {
       const adapter = this.agentFactory(plan.agent);
       const productivity = createProductivityAdapter(plan.tool);
@@ -953,7 +966,18 @@ export class AurousServices {
       );
       validateExecutionScope(plan, result);
       await this.dependencies.store.saveResult(runId, result);
-      await this.persistExactExecutionObjects(plan, result);
+      savedResultStatus = result.status;
+      try {
+        await this.persistExactExecutionObjects(runId, plan, result);
+      } catch (bookkeepingError) {
+        await this.event(
+          runId,
+          'warning',
+          'AUR-APPLY-103',
+          'Apply succeeded but exact-object bookkeeping could not be persisted.',
+          { probableCause: asAurousError(bookkeepingError, runId).message },
+        );
+      }
       await this.dependencies.store.updateStatus(runId, result.status);
       await this.event(
         runId,
@@ -974,6 +998,24 @@ export class AurousServices {
       return result;
     } catch (error) {
       const classified = asAurousError(error, runId);
+      if (savedResultStatus) {
+        // The authoritative result was already persisted. Never overwrite it with a
+        // synthetic failure: that would erase real created-object IDs and cause
+        // duplicate creation on retry. Best-effort reconcile the record status so a
+        // transient post-save write failure does not strand it at 'applying', then
+        // surface the post-save error and rethrow only.
+        try {
+          await this.dependencies.store.updateStatus(runId, savedResultStatus);
+        } catch {
+          // The saved result stays authoritative; diagnose can reconcile the record later.
+        }
+        await this.event(runId, 'error', classified.code, classified.message, {
+          severity: classified.severity,
+          probableCause: classified.probableCause,
+          nextAction: classified.nextAction,
+        });
+        throw classified;
+      }
       const now = this.now().toISOString();
       if (error instanceof AurousCommandError) {
         await this.dependencies.store.saveCommandLog(
@@ -1019,6 +1061,7 @@ export class AurousServices {
   }
 
   private async persistExactExecutionObjects(
+    runId: string,
     plan: AurousPlan,
     result: ExecutionResult,
   ): Promise<void> {
@@ -1028,6 +1071,19 @@ export class AurousServices {
     const pack = await contextStore.loadOrCreate();
     const saved = destinationFor(pack, plan.tool);
     if (!saved) return;
+    const boundDestinationId = planBoundDestinationId(plan);
+    if (boundDestinationId && boundDestinationId !== saved.id) {
+      // Label objects with the plan's bound destination, never a different saved one.
+      await this.event(
+        runId,
+        'warning',
+        'AUR-APPLY-104',
+        'Skipped exact-object bookkeeping: the plan destination differs from the saved destination.',
+        { planDestinationId: boundDestinationId, savedDestinationId: saved.id },
+      );
+      return;
+    }
+    const destinationId = boundDestinationId ?? saved.id;
     const exactResults = [...result.createdObjects, ...(result.skippedActions ?? [])].filter(
       (object) => Boolean(object.externalId),
     );
@@ -1045,7 +1101,7 @@ export class AurousServices {
         id: object.externalId,
         name: object.name,
         type: object.type || action.objectType,
-        destinationId: saved.id,
+        destinationId,
         ...(plan.tool === 'airtable'
           ? { parentId: airtableParentId(action, resultIdByAction) }
           : plan.tool === 'trello'
@@ -2549,19 +2605,33 @@ function hasStructuredExistingIdentityReference(
     property.key.endsWith('.dedupe.knownExternalId'),
   );
   if (known) return false;
-  return action.properties.some((property) =>
-    [
-      'airtable.recordId',
-      'linear.issueId',
-      'notion.pageId',
-      'notion.recordId',
-      'notion.relation.sourceRecordId',
-      'trello.cardId',
-      'trello.boardId',
-      'trello.listId',
-      'trello.checklistId',
-    ].includes(property.key),
-  );
+  // Only a structured ID for the action's OWN object type is self-identity. Parent
+  // references (e.g. a new card's trello.listId, required by AUR-PLAN-022) must never
+  // count, or a legitimate create is falsely rejected as an unauthorized reuse.
+  const selfIdentityKeys = [
+    'airtable.recordId',
+    'linear.issueId',
+    'notion.pageId',
+    'notion.recordId',
+    'notion.relation.sourceRecordId',
+    trelloSelfIdentityKey(action.objectType),
+  ].filter((key): key is string => key !== undefined);
+  return action.properties.some((property) => selfIdentityKeys.includes(property.key));
+}
+
+function trelloSelfIdentityKey(objectType: string): string | undefined {
+  switch (normalizedObjectType(objectType)) {
+    case 'board':
+      return 'trello.boardId';
+    case 'list':
+      return 'trello.listId';
+    case 'card':
+      return 'trello.cardId';
+    case 'checklist':
+      return 'trello.checklistId';
+    default:
+      return undefined;
+  }
 }
 
 function isSyntheticRelationshipCreate(
@@ -2723,6 +2793,24 @@ function linearPlanTeam(plan: AurousPlan): string | undefined {
   return plan.plannedActions
     .flatMap((action) => action.properties)
     .find((property) => property.key === 'linear.teamId')?.value;
+}
+
+function notionPlanDestination(plan: AurousPlan): string | undefined {
+  return plan.plannedActions
+    .flatMap((action) => action.properties)
+    .find((property) => property.key === 'notion.destination.parentPageId')?.value;
+}
+
+function planBoundDestinationId(plan: AurousPlan): string | undefined {
+  const key = createProductivityAdapter(plan.tool).destination.exactIdProperty;
+  const ids = new Set(
+    plan.plannedActions.map(
+      (action) => action.properties.find((property) => property.key === key)?.value,
+    ),
+  );
+  if (ids.size !== 1) return undefined;
+  const [only] = [...ids];
+  return typeof only === 'string' ? only : undefined;
 }
 
 function validateInspectionScope(

@@ -1,6 +1,7 @@
 import type { DiscoveredObject, ResolvedDestination } from '../../domain/destinations.js';
 import type { PlanAction } from '../../domain/schemas.js';
 import {
+  exactExternalIdMatches,
   exactObjectTypeMatches,
   normalizedObjectType,
   propertyValue,
@@ -87,7 +88,7 @@ function matchingDiscoveredRecords(
 ): DiscoveredObject[] {
   return destination.existingObjects.filter(
     (object) =>
-      object.id === id &&
+      exactExternalIdMatches(object.id, id, 'notion') &&
       (exactObjectTypeMatches('notion', object.type, 'database_record') ||
         exactObjectTypeMatches('notion', object.type, 'record') ||
         exactObjectTypeMatches('notion', object.type, 'page')),

@@ -1,4 +1,5 @@
 import { access, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { execa } from 'execa';
@@ -147,11 +148,13 @@ export async function backupIncompatibleCodexModelsCache(
   cachePath = codexModelsCachePath(),
   now: () => Date = () => new Date(),
 ): Promise<{ backupPath: string }> {
+  // Millisecond precision plus a random suffix so two repairs within the same second
+  // (common on Windows) cannot collide on the rename target.
   const stamp = now()
     .toISOString()
     .replace(/[-:]/g, '')
-    .replace(/\.\d{3}Z$/, 'Z');
-  const backupPath = `${cachePath}.aurous-backup-${stamp}`;
+    .replace(/\./g, '');
+  const backupPath = `${cachePath}.aurous-backup-${stamp}-${randomBytes(4).toString('hex')}`;
   await rename(cachePath, backupPath);
   return { backupPath };
 }

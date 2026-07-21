@@ -66,6 +66,15 @@ const satisfiedDestination: ResolvedDestination = {
   discoveryWarnings: [],
 };
 
+/** Same records exist by exact name, but the required book-to-category link is not satisfied. */
+const unsatisfiedRelationDestination: ResolvedDestination = {
+  ...satisfiedDestination,
+  sourceDetail: 'Rerun where both records exist but the relation is missing.',
+  existingObjects: satisfiedDestination.existingObjects.map((object) =>
+    object.type === 'airtable.record' ? { ...object, linkedIds: [] } : object,
+  ),
+};
+
 function emptyNoOpPlannerOutput(): PlanProposal {
   return {
     proposedWorkspaceStructure: [
@@ -157,6 +166,20 @@ describe('Airtable identical-rerun no-op plans', () => {
     };
     const materialized = materializeAirtableCompletedNoOpProposal(unsafe, satisfiedDestination);
     expect((materialized as PlanProposal).plannedActions).toEqual([]);
+  });
+
+  it('fails closed when records match by name but the required relation is not satisfied', () => {
+    const materialized = materializeAirtableCompletedNoOpProposal(
+      emptyNoOpPlannerOutput(),
+      unsatisfiedRelationDestination,
+    ) as PlanProposal;
+    expect(materialized.plannedActions).toEqual([]);
+  });
+
+  it('rejects an unsatisfied-relation no-op claim through planning', async () => {
+    await expect(
+      planServices(unsatisfiedRelationDestination, emptyNoOpPlannerOutput()),
+    ).rejects.toMatchObject({ code: 'AUR-CORE-001' });
   });
 
   it('identical Airtable rerun succeeds with exact IDs, skips, and zero writes', async () => {

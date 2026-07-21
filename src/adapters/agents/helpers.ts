@@ -16,6 +16,31 @@ export async function writeManualPrompt(
   return target;
 }
 
+/**
+ * Best-effort top-level JSON extraction: tolerates a ```json fence and surrounding prose via
+ * brace-slicing. Returns undefined (never throws) and does not unwrap a `result` envelope, so
+ * callers that must inspect the outer object (e.g. an is_error envelope) see it intact.
+ */
+export function extractJsonObject(value: string): unknown {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const withoutFence = trimmed.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  try {
+    return JSON.parse(withoutFence) as unknown;
+  } catch {
+    const first = withoutFence.indexOf('{');
+    const last = withoutFence.lastIndexOf('}');
+    if (first >= 0 && last > first) {
+      try {
+        return JSON.parse(withoutFence.slice(first, last + 1)) as unknown;
+      } catch {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
+}
+
 export function parseJsonPayload(value: string): unknown {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -39,6 +64,36 @@ export function parseJsonPayload(value: string): unknown {
     }
     throw invalidOutput('The agent response was not valid JSON.', error);
   }
+}
+
+export interface McpServerBlock {
+  entryLine: string;
+  lines: string[];
+}
+
+/**
+ * Groups `mcp list` output into per-server blocks keyed by an exact first-token match, so a
+ * neighbour like `notion-proxy` never satisfies `notion` and a status on a following
+ * (indented) line is still attributed to the server it belongs to.
+ */
+export function findMcpServerBlocks(output: string, name: string): McpServerBlock[] {
+  const target = name.toLowerCase();
+  const blocks: McpServerBlock[] = [];
+  let current: McpServerBlock | undefined;
+  for (const raw of output.split('\n')) {
+    if (raw.trim() === '' || /^\s/.test(raw)) {
+      if (current) current.lines.push(raw);
+      continue;
+    }
+    const token = raw.trim().match(/[A-Za-z0-9][A-Za-z0-9._-]*/)?.[0];
+    if (token && token.toLowerCase() === target) {
+      current = { entryLine: raw, lines: [raw] };
+      blocks.push(current);
+    } else {
+      current = undefined;
+    }
+  }
+  return blocks;
 }
 
 export function commandFailure(

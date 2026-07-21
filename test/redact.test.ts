@@ -19,4 +19,19 @@ describe('secret redaction', () => {
     expect(result.metadata.apiKey).toBe('[REDACTED_SECRET]');
     expect(input.metadata.apiKey).toBe('secret_abcdefghijk');
   });
+
+  it('round-trips a value that ends in a key=secret assignment without throwing', () => {
+    const input = { note: 'db connection password=hunter2' };
+    const result = redactValue(input);
+    expect(result.note).toBe('db connection password=[REDACTED]');
+    expect(result.note).not.toContain('hunter2');
+    expect(input.note).toBe('db connection password=hunter2');
+  });
+
+  it('redacts secrets stored under generic JSON keys', () => {
+    const input = { credentials: { password: 'hunter2', apiKey: 'plainvalue' } };
+    const result = redactValue(input);
+    expect(result.credentials.password).toBe('[REDACTED]');
+    expect(result.credentials.apiKey).toBe('[REDACTED]');
+  });
 });

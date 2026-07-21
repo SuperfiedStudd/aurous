@@ -688,10 +688,10 @@ function actionUsesCustomStatus(action: PlanAction): boolean {
 }
 
 function failureConfirmsNoWrite(failure: ExecutionResult['failures'][number]): boolean {
-  return (
-    failure.code === 'AUR-APPLY-001' ||
-    /\b(?:was|were) not (?:created|updated|configured|linked)\b/i.test(failure.summary)
-  );
+  // Only the structured code confirms no external write. Prose is never trusted:
+  // partial-write summaries ("was created but views were not configured") would
+  // otherwise authorize re-creation and duplicate the object.
+  return failure.code === 'AUR-APPLY-001';
 }
 
 function requiresExistingViewFilterRepair(

@@ -1,5 +1,9 @@
 import type { AurousPlan, PlanAction, PlanProposal } from '../../domain/schemas.js';
-import type { DestinationCandidate, ResolvedDestination } from '../../domain/destinations.js';
+import type {
+  DestinationCandidate,
+  DiscoveredObject,
+  ResolvedDestination,
+} from '../../domain/destinations.js';
 import {
   exactBindingWarnings,
   exactObjectMatches,
@@ -56,7 +60,7 @@ TRELLO DEPENDENCY CONTRACT:
     const boundActions = capabilityNormalized.plannedActions.map((action) => {
       const parentId = resolveTrelloParentId(action, destination, capabilityNormalized.plannedActions);
       const matches = exactObjectMatches(destination, action, 'trello', parentId);
-      const existing = matches.length === 1 ? matches[0] : undefined;
+      const existing = canonicalTrelloReuse(matches, parentId, destination);
       const properties = action.properties.filter(
         (property) =>
           ![
@@ -128,6 +132,25 @@ TRELLO EXECUTION CONTRACT:
 - Do not create labels. Do not archive, delete, move, or create anything outside the approved actions.
 - Report every created or reused object with its exact returned ID and URL when available. State unsupported capabilities in compatibilityNotes; never silently degrade.`;
   }
+}
+
+/**
+ * Reuse the lowest-ID canonical among exact matches (matches are already sorted ascending by ID),
+ * mirroring Airtable/Notion. Multiple same-named objects under one parent reuse the canonical rather
+ * than triggering a duplicate create. Only truly cross-parent, unscoped ambiguity declines reuse.
+ */
+function canonicalTrelloReuse(
+  matches: DiscoveredObject[],
+  parentId: string | undefined,
+  destination: ResolvedDestination,
+): DiscoveredObject | undefined {
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) return matches[0];
+  if (parentId === undefined) {
+    const parentKeys = new Set(matches.map((object) => object.parentId ?? destination.id));
+    if (parentKeys.size > 1) return undefined;
+  }
+  return matches[0];
 }
 
 function resolveTrelloParentId(

@@ -12,7 +12,10 @@ import {
 import { executionResultJsonSchema, planProposalJsonSchema } from '../../domain/json-schemas.js';
 import { RecoveryInspectionSchema } from '../../domain/recovery.js';
 import { recoveryInspectionJsonSchema } from '../../domain/recovery-json-schemas.js';
-import { DestinationDiscoverySchema } from '../../domain/destinations.js';
+import {
+  DestinationDiscoverySchema,
+  type SanitizedDiscoveryTrace,
+} from '../../domain/destinations.js';
 import { destinationDiscoveryJsonSchema } from '../../domain/destination-json-schema.js';
 import {
   buildDestinationDiscoveryPrompt,
@@ -23,6 +26,7 @@ import {
 } from './prompts.js';
 import {
   commandFailure,
+  findMcpServerBlocks,
   parseJsonPayload,
   structuredOutputFailure,
   writeManualPrompt,
@@ -322,7 +326,7 @@ export class CodexAgentAdapter implements AgentAdapter {
     let result = await this.execCodex(args, input, prompt, phase);
     if (
       (result.exitCode !== 0 || result.isCanceled) &&
-      isCodexModelsCacheSchemaError(`${result.stdout}\n${result.stderr}`) &&
+      isCodexModelsCacheSchemaError(result.stderr) &&
       !this.cacheRepairAttempted
     ) {
       const repairPreflight = await runCodexPreflight({ repair: true, runProbe: false });
@@ -344,7 +348,7 @@ export class CodexAgentAdapter implements AgentAdapter {
       result = await this.execCodex(args, input, prompt, phase);
       if (
         (result.exitCode !== 0 || result.isCanceled) &&
-        isCodexModelsCacheSchemaError(`${result.stdout}\n${result.stderr}`)
+        isCodexModelsCacheSchemaError(result.stderr)
       ) {
         throw codexCacheSchemaFailureError({
           detail: redactText(`${result.stderr}\n${result.stdout}`.trim()).slice(0, 500),
@@ -394,27 +398,9 @@ export class CodexAgentAdapter implements AgentAdapter {
         );
       }
     }
+    let value: T;
     try {
-      const value = parse(parseJsonPayload(output));
-      const integration = executionTool(input);
-      return {
-        value,
-        command: ['codex', ...args],
-        stdout: result.stdout,
-        stderr: result.stderr,
-        durationMs,
-        ...(phase === 'destination-discover' && integration && integration !== 'mock'
-          ? {
-              discoveryTrace: buildCodexDiscoveryTrace({
-                stdout: result.stdout,
-                discoveryId: invocationRunId(input),
-                integration,
-                startedAt,
-                completedAt,
-              }),
-            }
-          : {}),
-      };
+      value = parse(parseJsonPayload(output));
     } catch (error) {
       throw structuredOutputFailure(
         'Codex',
@@ -427,6 +413,26 @@ export class CodexAgentAdapter implements AgentAdapter {
         runId,
       );
     }
+    const integration = executionTool(input);
+    const record: InvocationRecord<T> = {
+      value,
+      command: ['codex', ...args],
+      stdout: result.stdout,
+      stderr: result.stderr,
+      durationMs,
+    };
+    // Build the audit trace after the result is already valid; a trace failure must never
+    // reclassify a valid discovery as invalid structured output.
+    if (phase === 'destination-discover' && integration && integration !== 'mock') {
+      record.discoveryTrace = safeCodexDiscoveryTrace({
+        stdout: result.stdout,
+        discoveryId: runId,
+        integration,
+        startedAt,
+        completedAt,
+      });
+    }
+    return record;
   }
 
   private async execCodex(
@@ -582,20 +588,50 @@ const requiredCodexFlags = [
   '--strict-config',
 ];
 
-function mcpReadiness(
+export function mcpReadiness(
   exitCode: number,
   output: string,
   name: 'notion' | 'linear' | 'airtable' | 'trello',
 ): AgentDiagnostic['mcp']['notion'] {
   if (exitCode !== 0)
     return { status: 'unknown', detail: 'Could not inspect Codex MCP configuration.' };
-  const line = output
-    .split('\n')
-    .find((candidate) => new RegExp(`\\b${name}\\b`, 'i').test(candidate));
-  if (!line) return { status: 'not-ready', detail: `${name} was not listed by "codex mcp list".` };
-  if (/disabled|failed|error/i.test(line))
-    return { status: 'not-ready', detail: redactText(line.trim()) };
-  return { status: 'ready', detail: redactText(line.trim()) };
+  const blocks = findMcpServerBlocks(output, name);
+  if (blocks.length === 0)
+    return { status: 'not-ready', detail: `${name} was not listed by "codex mcp list".` };
+  let readyDetail: string | undefined;
+  for (const block of blocks) {
+    if (readyDetail === undefined) readyDetail = block.entryLine.trim();
+    const failing = block.lines.find((candidate) => /disabled|failed|error/i.test(candidate));
+    if (failing) return { status: 'not-ready', detail: redactText(failing.trim()) };
+  }
+  return { status: 'ready', detail: redactText(readyDetail ?? '') };
+}
+
+export function safeCodexDiscoveryTrace(input: {
+  stdout: string;
+  discoveryId: string;
+  integration: 'notion' | 'linear' | 'airtable' | 'trello';
+  startedAt: string;
+  completedAt: string;
+}): SanitizedDiscoveryTrace {
+  try {
+    return buildCodexDiscoveryTrace(input);
+  } catch {
+    return {
+      schemaVersion: 1,
+      discoveryId: input.discoveryId,
+      integration: input.integration,
+      agent: 'codex',
+      startedAt: input.startedAt,
+      completedAt: input.completedAt,
+      success: false,
+      sanitized: true,
+      operations: [],
+      warnings: [
+        'Aurous could not construct the sanitized discovery trace from the Codex event stream; the discovery result is valid but its MCP read audit is unavailable.',
+      ],
+    };
+  }
 }
 
 function sanitizeRepair(
@@ -621,7 +657,9 @@ function classifyCodexCommandFailure(
   requestedModel?: string,
 ) {
   const combined = `${stdout}\n${stderr}`;
-  if (!cancelled && !timedOut && isCodexModelsCacheSchemaError(combined)) {
+  // Classify cache-schema failures from stderr only; agent-controlled stdout must not
+  // relabel a genuine failure as AUR-AGENT-009 cache-repair advice.
+  if (!cancelled && !timedOut && isCodexModelsCacheSchemaError(stderr)) {
     return codexCacheSchemaFailureError({
       detail: redactText(stderr.trim() || stdout.trim()).slice(0, 500),
       ...(runId ? { runId } : {}),

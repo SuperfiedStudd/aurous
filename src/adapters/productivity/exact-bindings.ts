@@ -46,7 +46,9 @@ export function resolveExactObject(
   const namespace = bindingNamespace(tool);
   const persisted = propertyValue(action.properties, `${namespace}.dedupe.knownExternalId`);
   if (persisted) {
-    const exact = destination.existingObjects.find((object) => object.id === persisted);
+    const exact = destination.existingObjects.find((object) =>
+      exactExternalIdMatches(object.id, persisted, tool),
+    );
     if (
       exact &&
       exactObjectTypeMatches(tool, exact.type, action.objectType) &&
@@ -59,7 +61,9 @@ export function resolveExactObject(
   const structuredIds = structuredCandidateIds(action, tool);
   const byStructuredId = uniqueObjects(
     structuredIds
-      .map((id) => destination.existingObjects.find((object) => object.id === id))
+      .map((id) =>
+        destination.existingObjects.find((object) => exactExternalIdMatches(object.id, id, tool)),
+      )
       .filter((object): object is DiscoveredObject => Boolean(object))
       .filter(
         (object) =>
@@ -131,6 +135,31 @@ export function isLinearIssueUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 }
 
+/** Notion IDs appear dashed (API form) and dashless (URL form); collapse to a comparable canonical form. */
+export function normalizeNotionIdentity(value: string | null | undefined): string {
+  return (value ?? '').trim().toLocaleLowerCase().replace(/-/g, '');
+}
+
+/** A Notion UUID's dash/case-agnostic canonical form, or undefined when the value is not UUID-shaped. */
+function notionCanonicalId(value: string): string | undefined {
+  const canonical = normalizeNotionIdentity(value);
+  return /^[0-9a-f]{32}$/.test(canonical) ? canonical : undefined;
+}
+
+/**
+ * Exact external-ID equality. Strict and case-sensitive by default and for every non-Notion
+ * integration. Dash/case leniency applies only when tool === 'notion' AND both sides are 32-hex
+ * UUID-shaped. Callers whose integration is not statically Notion (e.g. relationAlreadySatisfied)
+ * must forward their tool, so a UUID-shaped non-Notion ID (e.g. a Linear issue UUID) is never
+ * matched leniently across case/dash variants.
+ */
+export function exactExternalIdMatches(candidate: string, persisted: string, tool?: ToolName): boolean {
+  if (candidate === persisted) return true;
+  if (tool !== 'notion') return false;
+  const canonical = notionCanonicalId(candidate);
+  return canonical !== undefined && canonical === notionCanonicalId(persisted);
+}
+
 export function linearIssueKeyFromObject(object: DiscoveredObject): string | undefined {
   if (object.identifier && looksLikeIssueKey(object.identifier)) return object.identifier;
   const fromUrl = object.url?.match(/\/issue\/([A-Z][A-Z0-9]+-\d+)(?:\/|$)/i)?.[1];
@@ -155,11 +184,14 @@ export function assertLinearIssueHasUuid(object: DiscoveredObject, action?: Plan
 export function relationAlreadySatisfied(
   existing: DiscoveredObject,
   requiredRelatedIds: string[],
+  tool?: ToolName,
 ): boolean {
   if (requiredRelatedIds.length === 0) return false;
   const current = existing.linkedIds ?? [];
   if (current.length === 0) return false;
-  return requiredRelatedIds.every((id) => current.includes(id));
+  return requiredRelatedIds.every((id) =>
+    current.some((linked) => exactExternalIdMatches(linked, id, tool)),
+  );
 }
 
 export function stampAlreadySatisfiedRelation(
@@ -224,23 +256,42 @@ export function stampExactExternalId(
 export function normalizeNullishProperties(
   properties: PlanAction['properties'],
 ): PlanAction['properties'] {
-  return properties.filter((property) => !isNullishPropertyValue(property.value));
+  return properties.filter((property) => {
+    if (isNullishPropertyValue(property.value)) return false;
+    // Identifier-typed keys carry an external ID; a sentinel like "none"/"n/a"/"-" means
+    // "no relationship", so strip it rather than passing a literal sentinel into ID resolution at
+    // execution. Value-bearing properties (titles, status) keep such literals — that was the bug.
+    if (isIdentifierPropertyKey(property.key) && isSentinelParentScope(property.value)) return false;
+    return true;
+  });
+}
+
+/** An ID-pointer property (…Id / …Ids), excluding value-bearing Notion/field properties. */
+function isIdentifierPropertyKey(key: string): boolean {
+  if (/\.property\./i.test(key)) return false;
+  return /Ids?$/.test(key);
 }
 
 export function isNullishPropertyValue(value: string): boolean {
   const trimmed = value.trim();
-  return (
-    trimmed === '' ||
-    trimmed === 'null' ||
-    trimmed === 'undefined' ||
-    /^(?:none|n\/a|na|unchanged|-)$/i.test(trimmed)
-  );
+  return trimmed === '' || trimmed === 'null' || trimmed === 'undefined';
 }
 
-/** Ignore sentinel parent IDs so exact binding is not falsely scoped away. */
+/** Ignore sentinel parent IDs (empty or a "no parent" literal like none/n/a/-) so exact binding is not falsely scoped away. */
 export function effectiveParentScope(parentId?: string): string | undefined {
-  if (parentId === undefined || isNullishPropertyValue(parentId)) return undefined;
+  if (parentId === undefined || isSentinelParentScope(parentId)) return undefined;
   return parentId;
+}
+
+/**
+ * A parent-scope sentinel is either nullish or a "no parent" literal. This is intentionally broader
+ * than isNullishPropertyValue: a projectId="none" means "no project scope", but a Status property
+ * value of "None" is a real value and must not be stripped.
+ */
+function isSentinelParentScope(parentId: string): boolean {
+  return (
+    isNullishPropertyValue(parentId) || /^(?:none|n\/a|na|unchanged|-)$/i.test(parentId.trim())
+  );
 }
 
 export function propertyValue(

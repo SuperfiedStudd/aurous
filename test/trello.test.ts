@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TrelloAdapter } from '../src/adapters/productivity/trello.js';
 import { createProductivityAdapter } from '../src/adapters/productivity/index.js';
 import { normalizedObjectType } from '../src/adapters/productivity/exact-bindings.js';
+import { normalizeTrelloPlanCapabilities } from '../src/adapters/productivity/trello-plan-capabilities.js';
 import { buildPlanningPrompt } from '../src/adapters/agents/prompts.js';
 import { MockAgentAdapter } from '../src/adapters/agents/mock.js';
 import { ToolNameSchema, PlanProposalSchema, type PlanProposal } from '../src/domain/schemas.js';
@@ -267,6 +268,48 @@ describe('Trello productivity adapter', () => {
     ).toBe('card_readme_submit');
   });
 
+  it('reuses the canonical board when two same-named boards exist under the workspace', () => {
+    const adapter = new TrelloAdapter();
+    const duplicateBoards: ResolvedDestination = {
+      ...workspace,
+      source: 'existing-match',
+      existingObjects: [
+        {
+          id: 'board_dup_b',
+          name: 'Aurous Launch HQ',
+          type: 'trello.board',
+          destinationId: 'wsp_aurous',
+          parentId: 'wsp_aurous',
+        },
+        {
+          id: 'board_dup_a',
+          name: 'Aurous Launch HQ',
+          type: 'trello.board',
+          destinationId: 'wsp_aurous',
+          parentId: 'wsp_aurous',
+        },
+      ],
+    };
+    const bound = adapter.bindDestination(
+      {
+        proposedWorkspaceStructure: [],
+        plannedActions: [trelloAction('action-001', 'board', 'Aurous Launch HQ', [])],
+        assumptions: [],
+        warnings: [],
+        destructiveActions: [],
+        expectedResult: 'Reuse the canonical board.',
+      },
+      duplicateBoards,
+    );
+    expect(bound.plannedActions[0]?.properties).toEqual(
+      expect.arrayContaining([
+        { key: 'trello.dedupe.knownExternalId', value: 'board_dup_a' },
+        { key: 'trello.dedupe.skipReason', value: 'already-exists' },
+      ]),
+    );
+    expect(bound.warnings.join(' ')).toMatch(/Duplicate risk/);
+  });
+
   it('attaches an existing label by exact ID only and never invents one', () => {
     const adapter = new TrelloAdapter();
     const bound = adapter.bindDestination(
@@ -440,6 +483,71 @@ describe('Trello productivity adapter', () => {
   it('reports trello ready in mock doctor diagnostics', async () => {
     const diagnostic = await new MockAgentAdapter().diagnose();
     expect(diagnostic.mcp.trello.status).toBe('ready');
+  });
+
+  it('converts a create-label with a known labelId to an attach update without a skip stamp', () => {
+    const normalized = normalizeTrelloPlanCapabilities({
+      proposedWorkspaceStructure: [],
+      plannedActions: [
+        trelloAction('action-001', 'label', 'Ready', [
+          { key: 'trello.labelId', value: 'label_ready' },
+        ]),
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'Attach existing label.',
+    });
+    const label = normalized.plannedActions[0];
+    expect(label?.operation).toBe('update');
+    expect(label?.properties).toEqual(
+      expect.arrayContaining([{ key: 'trello.dedupe.knownExternalId', value: 'label_ready' }]),
+    );
+    expect(label?.properties.some((property) => property.key === 'trello.dedupe.skipReason')).toBe(
+      false,
+    );
+  });
+
+  it('strips a trello.labelId that references a removed label action', () => {
+    const normalized = normalizeTrelloPlanCapabilities({
+      proposedWorkspaceStructure: [],
+      plannedActions: [
+        trelloAction(
+          'action-001',
+          'card',
+          'Task card',
+          [{ key: 'trello.labelId', value: 'action-002' }],
+          ['action-002'],
+        ),
+        trelloAction('action-002', 'label', 'New Label', []),
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'Card without a dangling label reference.',
+    });
+    expect(normalized.plannedActions.map((action) => action.id)).not.toContain('action-002');
+    const card = normalized.plannedActions.find((action) => action.id === 'action-001');
+    expect(card?.properties.some((property) => property.key === 'trello.labelId')).toBe(false);
+    expect(card?.dependsOn).not.toContain('action-002');
+  });
+
+  it('keeps a real Trello label external ID on a card through the cleanup', () => {
+    const normalized = normalizeTrelloPlanCapabilities({
+      proposedWorkspaceStructure: [],
+      plannedActions: [
+        trelloAction('action-001', 'card', 'Task card', [
+          { key: 'trello.labelId', value: 'label_ready' },
+        ]),
+        trelloAction('action-002', 'label', 'New Label', []),
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'Card keeps its real label ID.',
+    });
+    const card = normalized.plannedActions.find((action) => action.id === 'action-001');
+    expect(card?.properties).toContainEqual({ key: 'trello.labelId', value: 'label_ready' });
   });
 });
 

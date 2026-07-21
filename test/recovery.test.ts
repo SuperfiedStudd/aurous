@@ -320,6 +320,31 @@ describe('partial-run recovery planning', () => {
     });
   });
 
+  it('never trusts partial-write prose to authorize re-creation without the structured no-write code', () => {
+    const { plan, result, inspection } = fixture();
+    result.failures.push({
+      actionId: 'action-003',
+      code: 'AUR-MCP-050',
+      summary: 'The record set was created but its views were not configured.',
+      probableCause: 'The MCP write partially applied before stopping.',
+      nextAction: 'Inspect the record set before retrying.',
+      severity: 'recoverable',
+    });
+    const recovery = buildRecoveryPlan({
+      recoveryRunId: 'run-20260719T020000Z-bbbbbb',
+      originalPlan: plan,
+      originalResult: result,
+      inspection,
+      createdAt,
+    });
+    expect(recovery.classifications.find((item) => item.actionId === 'action-003')).toMatchObject({
+      status: 'blocked',
+      recoveryOperation: 'block',
+    });
+    expect(recovery.plannedActions.some((action) => action.target === 'Starter tasks')).toBe(false);
+    expect(recovery.isExecutable).toBe(false);
+  });
+
   it('loads legacy persisted recovery-plan filter prose through the typed boundary', () => {
     const { plan, result, inspection } = fixture();
     const recovery = buildRecoveryPlan({

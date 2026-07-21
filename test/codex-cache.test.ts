@@ -21,6 +21,15 @@ function validCache(
   };
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const malformedCache = JSON.stringify({
+  client_version: '0.145.0',
+  models: [{ slug: 'gpt-bad', display_name: 'Bad' }],
+});
+
 describe('Codex models cache preflight', () => {
   it('backs up a malformed cache once and leaves a repair diagnostic without raw contents', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'aurous-cache-'));
@@ -36,11 +45,14 @@ describe('Codex models cache preflight', () => {
 
     const first = await repairCodexModelsCache({
       cachePath,
-      now: () => new Date('2026-07-20T20:00:00.000Z'),
+      now: () => new Date('2026-07-20T20:00:00.123Z'),
     });
     expect(first.repaired).toBe(true);
     expect(first.attempted).toBe(true);
-    expect(first.backupPath).toBe(`${cachePath}.aurous-backup-20260720T200000Z`);
+    // Millisecond precision plus a random suffix keeps same-second repairs from colliding.
+    expect(first.backupPath).toMatch(
+      new RegExp(`${escapeRegExp(cachePath)}\\.aurous-backup-20260720T200000123Z-[0-9a-f]{8}$`),
+    );
     await expect(access(cachePath)).rejects.toThrow();
     await expect(access(first.backupPath!)).resolves.toBeUndefined();
 
@@ -57,6 +69,23 @@ describe('Codex models cache preflight', () => {
     expect(diagnostic.backupPath).toBe(first.backupPath);
     expect(JSON.stringify(diagnostic)).not.toMatch(/sk-|token|api[_-]?key|password/i);
     expect(JSON.stringify(diagnostic)).not.toContain('gpt-bad');
+  });
+
+  it('gives two repairs in the same instant distinct backup paths', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'aurous-cache-collision-'));
+    const cachePath = path.join(root, 'models_cache.json');
+    const sameInstant = () => new Date('2026-07-20T20:00:00.000Z');
+
+    await writeFile(cachePath, malformedCache, 'utf8');
+    const first = await repairCodexModelsCache({ cachePath, now: sameInstant });
+    await writeFile(cachePath, malformedCache, 'utf8');
+    const second = await repairCodexModelsCache({ cachePath, now: sameInstant });
+
+    expect(first.backupPath).toBeDefined();
+    expect(second.backupPath).toBeDefined();
+    expect(second.backupPath).not.toBe(first.backupPath);
+    await expect(access(first.backupPath!)).resolves.toBeUndefined();
+    await expect(access(second.backupPath!)).resolves.toBeUndefined();
   });
 
   it('leaves a valid cache untouched', async () => {

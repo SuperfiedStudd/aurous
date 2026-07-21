@@ -340,7 +340,7 @@ function tryNativeCodexModelListing(
     try {
       const stdout = execFileSync('codex', args, {
         encoding: 'utf8',
-        timeout: 8_000,
+        timeout: 3_000,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -376,11 +376,19 @@ function tryNativeCodexModelListing(
           notes: ['Listing came from the installed Codex CLI; no billable model call was made.'],
         };
       }
-    } catch {
-      // Command unsupported or failed; fall through.
+    } catch (error) {
+      // A timeout means the CLI hangs on this invocation; stop probing rather than blocking
+      // help for another timeout. Unsupported-command errors fall through to the next form.
+      if (isTimeoutError(error)) break;
     }
   }
   return undefined;
+}
+
+function isTimeoutError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const candidate = error as { killed?: boolean; signal?: string | null; code?: string };
+  return candidate.killed === true || Boolean(candidate.signal) || candidate.code === 'ETIMEDOUT';
 }
 
 function extractClaudeModelAliases(help: string): string[] {

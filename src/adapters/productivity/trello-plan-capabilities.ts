@@ -18,7 +18,7 @@ export function normalizeTrelloPlanCapabilities(proposal: PlanProposal): PlanPro
       if (knownId) {
         const properties = [...action.properties];
         setProperty(properties, 'trello.dedupe.knownExternalId', knownId);
-        setProperty(properties, 'trello.dedupe.skipReason', 'already-exists');
+        // Attaching a label is a real write needing approval; not a no-op skip.
         plannedActions.push({
           ...action,
           operation: 'update',
@@ -50,10 +50,10 @@ export function normalizeTrelloPlanCapabilities(proposal: PlanProposal): PlanPro
   const cleaned = plannedActions.map((action) => ({
     ...action,
     dependsOn: action.dependsOn.filter((id) => !removedIds.has(id)),
-    properties: action.properties.filter((property) => {
-      if (property.key === 'trello.labelId' && removedIds.size > 0) return true;
-      return true;
-    }),
+    // Drop a trello.labelId that points at a removed label action; the reference is now dangling.
+    properties: action.properties.filter(
+      (property) => !(property.key === 'trello.labelId' && removedIds.has(property.value)),
+    ),
   }));
 
   return {

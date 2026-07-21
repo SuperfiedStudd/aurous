@@ -170,7 +170,7 @@ Never emit a placeholder parent or ask for a page URL.`;
         propertyValue(bound.properties, 'notion.relation.targetRecordIds') ??
           propertyValue(bound.properties, 'notion.relation.targetRecordId'),
       );
-      if (existing && relatedIds.length > 0 && relationAlreadySatisfied(existing, relatedIds)) {
+      if (existing && relatedIds.length > 0 && relationAlreadySatisfied(existing, relatedIds, 'notion')) {
         bound = stampAlreadySatisfiedRelation(bound, 'notion');
       } else if (hasTypedNotionRelation(bound)) {
         const binding = parseNotionRelation(notionRelationProperty(bound));
@@ -182,7 +182,7 @@ Never emit a placeholder parent or ask for a page URL.`;
             existing ??
             destination.existingObjects.find((object) => object.id === binding.source.recordId);
           const typedLinkedIds = binding.targets.map((target) => target.recordId!);
-          if (source && relationAlreadySatisfied(source, typedLinkedIds)) {
+          if (source && relationAlreadySatisfied(source, typedLinkedIds, 'notion')) {
             bound = stampExactExternalId(bound, source, 'notion');
             bound = stampAlreadySatisfiedRelation(bound, 'notion');
           }

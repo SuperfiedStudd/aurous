@@ -2,6 +2,7 @@ import { AurousError } from '../../core/errors.js';
 import type { DiscoveredObject, ResolvedDestination } from '../../domain/destinations.js';
 import type { PlanAction } from '../../domain/schemas.js';
 import {
+  normalizeNotionIdentity,
   normalizedObjectType,
   parseRelatedIdList,
   propertyValue,
@@ -198,10 +199,6 @@ function collectionIdFromIdentifier(identifier: string | null | undefined): stri
   const match = /^collection:\/\/([0-9a-f-]{36})$/i.exec(trimmed);
   if (match?.[1]) return normalizeNotionIdentity(match[1]);
   return normalizeNotionIdentity(trimmed) || undefined;
-}
-
-function normalizeNotionIdentity(value: string | null | undefined): string {
-  return (value ?? '').trim().toLocaleLowerCase().replace(/-/g, '');
 }
 
 function isNotionRelationAction(action: PlanAction): boolean {

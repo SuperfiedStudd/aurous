@@ -84,6 +84,9 @@ describe('Linear issue-key authorization', () => {
         { key: 'linear.dedupe.knownExternalId', value: issueKey },
       ]),
     );
+    // projectId/milestoneId=none are identifier sentinels meaning "no relationship"; they are
+    // stripped so a literal 'none' never reaches ID resolution at execution, while the key identity
+    // is still authorized above. Value-bearing 'none' (titles/status) is kept elsewhere.
     expect(plan.plannedActions[0]?.properties.some((property) => property.value === 'none')).toBe(
       false,
     );

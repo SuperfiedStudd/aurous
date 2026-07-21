@@ -10,6 +10,10 @@ import {
 import type { ToolName } from '../domain/schemas.js';
 import { AurousError } from './errors.js';
 
+// Monotonic per-process suffix so two concurrent atomic writes to the same context
+// pack never share a temp file and corrupt each other's write/rename.
+let temporaryFileSequence = 0;
+
 export class ContextPackStore {
   constructor(readonly projectRoot: string) {}
 
@@ -163,7 +167,7 @@ export class ContextPackStore {
 
   private async save(pack: ContextPack): Promise<void> {
     await mkdir(path.dirname(this.path), { recursive: true, mode: 0o700 });
-    const temporary = `${this.path}.${process.pid}.tmp`;
+    const temporary = `${this.path}.${process.pid}.${(temporaryFileSequence += 1)}.tmp`;
     await writeFile(
       temporary,
       `${JSON.stringify(

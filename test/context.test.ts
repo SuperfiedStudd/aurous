@@ -10,6 +10,20 @@ import {
   resolveWorkspaceRoot,
 } from '../src/core/context-pack.js';
 
+// Creating a symlink throws EPERM on Windows without Developer Mode/admin. Probe the real
+// capability so the POSIX-focused symlink assertion is exercised where supported and skipped
+// (not failed) where it is not.
+async function supportsSymlink(): Promise<boolean> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'aurous-symlink-probe-'));
+  try {
+    await writeFile(path.join(dir, 'target'), 'probe\n');
+    await symlink(path.join(dir, 'target'), path.join(dir, 'link'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 describe('ingestContext', () => {
   it('reads only selected safe project context and reports exclusions', async () => {
     const parent = await mkdtemp(path.join(os.tmpdir(), 'aurous-context-'));
@@ -33,7 +47,10 @@ describe('ingestContext', () => {
     await writeFile(path.join(project, 'Library', 'Caches', 'cached.md'), 'do-not-read\n');
     await writeFile(path.join(project, '.hidden-work', 'hidden.md'), 'do-not-read\n');
     await writeFile(path.join(parent, 'outside.md'), 'outside approved path\n');
-    await symlink(path.join(parent, 'outside.md'), path.join(project, 'outside-link.md'));
+    const canSymlink = await supportsSymlink();
+    if (canSymlink) {
+      await symlink(path.join(parent, 'outside.md'), path.join(project, 'outside-link.md'));
+    }
 
     const bundle = await ingestContext({ cwd: parent, paths: ['project'] });
 
@@ -56,7 +73,51 @@ describe('ingestContext', () => {
     expect(bundle.summary.skipped.join('\n')).toContain('Library/ (excluded directory)');
     expect(bundle.summary.skipped.join('\n')).toContain('.hidden-work/ (excluded directory)');
     expect(bundle.summary.skipped.join('\n')).toContain('package-lock.json (not selected)');
-    expect(bundle.summary.skipped.join('\n')).toContain('outside-link.md (symbolic link)');
+    if (canSymlink) {
+      expect(bundle.summary.skipped.join('\n')).toContain('outside-link.md (symbolic link)');
+    }
+  });
+
+  it('classifies nested files by POSIX path segment on every platform', async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), 'aurous-context-nested-'));
+    const project = path.join(parent, 'project');
+    await mkdir(path.join(project, 'docs'), { recursive: true });
+    await writeFile(path.join(project, 'package.json'), '{"name":"nested"}\n');
+    // Extensionless file: only the "docs" path segment can classify it as documentation.
+    await writeFile(path.join(project, 'docs', 'OVERVIEW'), 'Architecture overview.\n');
+
+    const bundle = await ingestContext({ cwd: parent, paths: ['project'] });
+
+    const overview = bundle.summary.files.find((file) => file.relativePath === 'docs/OVERVIEW');
+    expect(overview?.category).toBe('documentation');
+    expect(bundle.summary.files.every((file) => !file.relativePath.includes('\\'))).toBe(true);
+  });
+
+  it('does not namespace a lone approved root when a sibling requested path is skipped', async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), 'aurous-context-skip-'));
+    const project = path.join(parent, 'project');
+    await mkdir(project, { recursive: true });
+    await writeFile(path.join(project, 'README.md'), '# Only root\n');
+    const linkTarget = path.join(parent, 'target-dir');
+    await mkdir(linkTarget, { recursive: true });
+    await writeFile(path.join(linkTarget, 'README.md'), '# Target\n');
+    const linkedRoot = path.join(parent, 'linked-root');
+    let linkCreated = false;
+    try {
+      // A directory junction is created without elevated rights on Windows and reaches the
+      // same symbolic-link skip branch; on POSIX the type argument is ignored.
+      await symlink(linkTarget, linkedRoot, 'junction');
+      linkCreated = true;
+    } catch {
+      // Environment forbids links entirely; the requested-2-approved-1 shape is unreachable.
+    }
+    if (!linkCreated) return;
+
+    const bundle = await ingestContext({ cwd: parent, paths: ['project', 'linked-root'] });
+
+    expect(bundle.summary.approvedPaths).toHaveLength(1);
+    expect(bundle.summary.files.map((file) => file.relativePath)).toEqual(['README.md']);
+    expect(bundle.summary.skipped.join('\n')).toContain('linked-root (symbolic link)');
   });
 
   it('finds bounded project markers and refuses the home-directory boundary', async () => {

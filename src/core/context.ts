@@ -170,6 +170,15 @@ export function ingestInlineContext(options: InlineContextOptions): ContextBundl
   };
 }
 
+interface CollectedFile {
+  path: string;
+  rootBasename: string;
+  relativePath: string;
+  bytes: number;
+  category: ContextFile['category'];
+  content: string;
+}
+
 export async function ingestContext(options: ContextIngestionOptions): Promise<ContextBundle> {
   if (options.paths.length === 0) {
     throw new AurousError({
@@ -186,6 +195,7 @@ export async function ingestContext(options: ContextIngestionOptions): Promise<C
   const approvedPaths: string[] = [];
   const files: ContextFile[] = [];
   const documents: ContextBundle['documents'] = [];
+  const collected: CollectedFile[] = [];
   const skipped: string[] = [];
   let totalBytes = 0;
 
@@ -209,17 +219,20 @@ export async function ingestContext(options: ContextIngestionOptions): Promise<C
     }
     const root = await realpath(requested);
     approvedPaths.push(root);
+    const rootBasename = path.basename(root);
     const candidates = requestedStat.isDirectory() ? await walk(root, skipped) : [root];
     for (const candidate of candidates.sort()) {
-      if (files.length >= maxFiles || totalBytes >= maxTotalBytes) {
+      if (collected.length >= maxFiles || totalBytes >= maxTotalBytes) {
         skipped.push(
-          `${path.relative(root, candidate) || path.basename(candidate)} (context limit reached)`,
+          `${toPosixPath(path.relative(root, candidate) || path.basename(candidate))} (context limit reached)`,
         );
         continue;
       }
-      const relativePath = requestedStat.isDirectory()
-        ? path.relative(root, candidate) || path.basename(candidate)
-        : path.basename(candidate);
+      const relativePath = toPosixPath(
+        requestedStat.isDirectory()
+          ? path.relative(root, candidate) || path.basename(candidate)
+          : path.basename(candidate),
+      );
       const classification = classifyFile(candidate, relativePath);
       if (!classification) {
         skipped.push(`${relativePath} (not selected)`);
@@ -244,14 +257,14 @@ export async function ingestContext(options: ContextIngestionOptions): Promise<C
       }
       const content = buffer.toString('utf8');
       totalBytes += buffer.byteLength;
-      files.push({
+      collected.push({
         path: candidate,
-        relativePath:
-          approvedPaths.length > 1 ? `${path.basename(root)}/${relativePath}` : relativePath,
+        rootBasename,
+        relativePath,
         bytes: buffer.byteLength,
         category: classification,
+        content,
       });
-      documents.push({ path: candidate, relativePath, content });
     }
   }
 
@@ -262,6 +275,23 @@ export async function ingestContext(options: ContextIngestionOptions): Promise<C
       probableCause: 'Every provided path was a symbolic link.',
       nextAction: 'Pass the real path to a project file or directory.',
     });
+  }
+
+  // Namespace every file under its root basename only when more than one root was actually
+  // approved, so a lone surviving root (after skips) is never spuriously prefixed and
+  // same-named files across multiple roots (e.g. two README.md) never collide.
+  const namespaceRoots = approvedPaths.length > 1;
+  for (const entry of collected) {
+    const relativePath = namespaceRoots
+      ? `${entry.rootBasename}/${entry.relativePath}`
+      : entry.relativePath;
+    files.push({
+      path: entry.path,
+      relativePath,
+      bytes: entry.bytes,
+      category: entry.category,
+    });
+    documents.push({ path: entry.path, relativePath, content: entry.content });
   }
 
   const git = await readGitSummary(approvedPaths[0]!);
@@ -276,6 +306,11 @@ export async function ingestContext(options: ContextIngestionOptions): Promise<C
     },
     documents,
   };
+}
+
+/** Present relative paths with POSIX separators so the bundle is stable across OSes. */
+function toPosixPath(value: string): string {
+  return value.split(path.sep).join('/');
 }
 
 async function walk(root: string, skipped: string[]): Promise<string[]> {
@@ -306,7 +341,8 @@ function classifyFile(
 ): ContextFile['category'] | undefined {
   const name = path.basename(absolutePath).toLowerCase();
   const extension = path.extname(name).toLowerCase();
-  const segments = relativePath.toLowerCase().split(path.sep);
+  // relativePath is normalized to POSIX separators by its callers.
+  const segments = relativePath.toLowerCase().split('/');
   if (
     excludedFileNames.has(name) ||
     name === '.env' ||

@@ -158,7 +158,7 @@ export class AurousShell {
         await this.contextCommand(args);
         return;
       case '/preset':
-        this.selectPreset(args);
+        await this.selectPreset(args);
         return;
       case '/plan':
         await this.plan(args.join(' ').trim() || undefined);
@@ -400,7 +400,7 @@ export class AurousShell {
     }
   }
 
-  private selectPreset(args: string[]): void {
+  private async selectPreset(args: string[]): Promise<void> {
     const state = this.requireState();
     if (args.length === 0) {
       this.dependencies.renderer.notice(`Preset ${state.preset ?? 'none'}`);
@@ -411,8 +411,8 @@ export class AurousShell {
     else if (requested === 'software-launch' || requested === 'linear-software-launch-v1')
       state.preset = 'software-launch';
     else throw shellInputError('preset', 'Choose software-launch or none.');
+    await this.contextStore().setPreset(state.preset);
     this.setReady(`Preset ${state.preset ?? 'none'}`);
-    void this.contextStore().setPreset(state.preset);
   }
 
   private async plan(objective?: string): Promise<boolean> {

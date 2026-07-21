@@ -38,6 +38,15 @@ export function materializeAirtableCompletedNoOpProposal(
     matched.push({ name: item.name, purpose: item.purpose, exact });
   }
 
+  // Fail closed: if a purpose declares a link to another matched record that is not actually
+  // satisfied on the inspected data, the no-op claim is false. Return the empty proposal so schema
+  // validation surfaces it instead of materializing a plan that silently omits the required link.
+  for (const source of matched) {
+    const requiredTargetIds = requiredRelationTargetIds(source, matched);
+    if (requiredTargetIds.length === 0) continue;
+    if (!relationAlreadySatisfied(source.exact, requiredTargetIds, 'airtable')) return value;
+  }
+
   const plannedActions: PlanAction[] = matched.map((entry, index) => ({
     id: actionId(index + 1),
     operation: 'update' as const,
@@ -89,7 +98,7 @@ function buildSatisfiedRelationAction(
     );
     if (targets.length === 0) continue;
     const targetIds = targets.map((target) => target.exact.id);
-    if (!relationAlreadySatisfied(source.exact, targetIds)) continue;
+    if (!relationAlreadySatisfied(source.exact, targetIds, 'airtable')) continue;
     return {
       id: actionId(nextIndex),
       operation: 'link',
@@ -141,6 +150,19 @@ function resolveExactRecord(
 function extractAirtableRecordId(value: string): string | undefined {
   const match = value.match(/\b(rec[A-Za-z0-9]{14,})\b/);
   return match?.[1];
+}
+
+/** Matched-record IDs a source purpose declares a link to, other than the source's own ID. */
+function requiredRelationTargetIds(
+  source: { purpose: string; exact: DiscoveredObject },
+  matched: { exact: DiscoveredObject }[],
+): string[] {
+  const referenced = new Set(
+    [...source.purpose.matchAll(/\b(rec[A-Za-z0-9]{14,})\b/g)].map((match) => match[1]),
+  );
+  return matched
+    .map((entry) => entry.exact.id)
+    .filter((id) => id !== source.exact.id && referenced.has(id));
 }
 
 function actionId(index: number): string {

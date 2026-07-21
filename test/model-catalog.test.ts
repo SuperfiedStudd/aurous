@@ -1,7 +1,28 @@
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+// Make CLI probing deterministic regardless of whether a real `codex`/`claude` binary is on
+// PATH: `codex` reports a version and a help text without a machine-readable models listing;
+// any other binary (and any call with an empty PATH) is treated as not installed.
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return {
+    ...actual,
+    execFileSync: vi.fn((file: string, args: readonly string[], options?: { env?: NodeJS.ProcessEnv }) => {
+      const env = options?.env ?? process.env;
+      if (!env.PATH) throw Object.assign(new Error(`spawnSync ${file} ENOENT`), { code: 'ENOENT' });
+      if (file === 'codex') {
+        if (args.includes('--version')) return 'codex-cli 0.144.6\n';
+        if (args.includes('--help')) return 'Usage: codex [options]\n  exec   Run a task\n';
+        throw Object.assign(new Error('unknown command'), { status: 1 });
+      }
+      throw Object.assign(new Error(`spawnSync ${file} ENOENT`), { code: 'ENOENT' });
+    }),
+  };
+});
+
 import {
   detectClaudeModelCatalog,
   detectCodexModelCatalog,

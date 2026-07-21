@@ -54,6 +54,10 @@ const defaultConfig: AurousConfig = {
   timeoutMs: 300_000,
 };
 
+// Monotonic per-process suffix so two concurrent atomic writes to the same target
+// never share a temp file and corrupt each other's write/rename.
+let temporaryFileSequence = 0;
+
 export class LocalRunStore implements RunStore {
   readonly stateDirectory: string;
 
@@ -212,7 +216,14 @@ export class LocalRunStore implements RunStore {
       return content
         .split('\n')
         .filter(Boolean)
-        .map((line) => DiagnosticEventSchema.parse(JSON.parse(line)));
+        .flatMap((line) => {
+          try {
+            return [DiagnosticEventSchema.parse(JSON.parse(line))];
+          } catch {
+            // A single corrupt or partially written line must not break diagnose.
+            return [];
+          }
+        });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
@@ -289,7 +300,14 @@ export class LocalRunStore implements RunStore {
       return content
         .split('\n')
         .filter(Boolean)
-        .map((line) => RecoveryCheckpointSchema.parse(JSON.parse(line)));
+        .flatMap((line) => {
+          try {
+            return [RecoveryCheckpointSchema.parse(JSON.parse(line))];
+          } catch {
+            // A single corrupt or partially written line must not break recovery reads.
+            return [];
+          }
+        });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
@@ -310,7 +328,7 @@ export class LocalRunStore implements RunStore {
 
   private async writeJson(target: string, value: unknown): Promise<void> {
     await mkdir(path.dirname(target), { recursive: true, mode: 0o700 });
-    const temporary = `${target}.${process.pid}.tmp`;
+    const temporary = `${target}.${process.pid}.${(temporaryFileSequence += 1)}.tmp`;
     await writeFile(temporary, `${JSON.stringify(redactValue(value), null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,

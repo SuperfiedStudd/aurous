@@ -8,8 +8,19 @@ import { MockAgentAdapter } from '../src/adapters/agents/mock.js';
 import type { Output } from '../src/core/output.js';
 import { LocalRunStore } from '../src/core/run-store.js';
 import { AurousServices } from '../src/core/services.js';
-import type { DestinationDiscovery, SanitizedDiscoveryTrace } from '../src/domain/destinations.js';
-import type { PlanProposal } from '../src/domain/schemas.js';
+import type {
+  DestinationDiscovery,
+  ResolvedDestination,
+  SanitizedDiscoveryTrace,
+} from '../src/domain/destinations.js';
+import type {
+  AurousPlan,
+  ContextBundle,
+  ExecutionResult,
+  PlanProposal,
+  RunRecord,
+  RunStatus,
+} from '../src/domain/schemas.js';
 
 function captureOutput(): { output: Output; lines: string[] } {
   const lines: string[] = [];
@@ -35,6 +46,24 @@ async function fixture() {
   const services = new AurousServices({ workspace, store, output: capture.output });
   await services.init({ defaultAgent: 'mock', defaultTool: 'notion' });
   return { workspace, capture, store, services };
+}
+
+function discoveryFrom(destination: ResolvedDestination): DestinationDiscovery {
+  return {
+    integration: destination.integration,
+    candidates: [
+      {
+        id: destination.id,
+        name: destination.name,
+        kind: destination.kind,
+        description: destination.sourceDetail,
+        existingAurousMatch: true,
+      },
+    ],
+    existingObjects: destination.existingObjects,
+    inspectedAt: destination.verifiedAt,
+    warnings: destination.discoveryWarnings,
+  };
 }
 
 describe('AurousServices mock flow', () => {
@@ -71,6 +100,258 @@ describe('AurousServices mock flow', () => {
       'utf8',
     );
     expect(planLog).toContain('Project Command Center');
+  });
+
+  it('never overwrites the authoritative result when a post-save step throws', async () => {
+    const { workspace, capture } = await fixture();
+    const savedResults: ExecutionResult[] = [];
+    class PostSaveFailingStore extends LocalRunStore {
+      override async saveResult(runId: string, result: ExecutionResult): Promise<void> {
+        savedResults.push(result);
+        await super.saveResult(runId, result);
+      }
+      override async updateStatus(runId: string, status: RunStatus): Promise<RunRecord> {
+        if (status === 'succeeded' || status === 'partial') {
+          throw new Error('simulated bookkeeping failure after the authoritative result was saved');
+        }
+        return super.updateStatus(runId, status);
+      }
+    }
+    const store = new PostSaveFailingStore(workspace);
+    const services = new AurousServices({ workspace, store, output: capture.output });
+    const plan = await services.plan({
+      agent: 'mock',
+      tool: 'notion',
+      contextPaths: ['.'],
+      objective: 'Keep created-object IDs safe on rerun',
+    });
+
+    await expect(services.apply(plan.runId, { confirmed: true })).rejects.toBeDefined();
+
+    const persisted = await store.loadResult(plan.runId);
+    expect(persisted?.status).toBe('succeeded');
+    expect(savedResults).toHaveLength(1);
+    expect(savedResults[0]?.status).toBe('succeeded');
+    expect(persisted?.createdObjects).toEqual(savedResults[0]?.createdObjects);
+  });
+
+  it('reconciles the record status after a transient post-save write failure', async () => {
+    const { workspace, capture } = await fixture();
+    class TransientUpdateStore extends LocalRunStore {
+      terminalFailuresRemaining = 1;
+      override async updateStatus(runId: string, status: RunStatus): Promise<RunRecord> {
+        if (
+          (status === 'succeeded' || status === 'partial') &&
+          this.terminalFailuresRemaining > 0
+        ) {
+          this.terminalFailuresRemaining -= 1;
+          throw new Error('transient status write failure');
+        }
+        return super.updateStatus(runId, status);
+      }
+    }
+    const store = new TransientUpdateStore(workspace);
+    const services = new AurousServices({ workspace, store, output: capture.output });
+    const plan = await services.plan({
+      agent: 'mock',
+      tool: 'notion',
+      contextPaths: ['.'],
+      objective: 'Recover the record status on a flaky write',
+    });
+
+    await expect(services.apply(plan.runId, { confirmed: true })).rejects.toBeDefined();
+
+    expect((await store.getRun(plan.runId)).status).toBe('succeeded');
+    expect((await store.loadResult(plan.runId))?.status).toBe('succeeded');
+  });
+
+  it('accepts a Trello create-card that carries only its parent list ID', async () => {
+    const { workspace, capture, store } = await fixture();
+    const destination: ResolvedDestination = {
+      integration: 'trello',
+      id: 'wsp_aurous',
+      name: 'Aurous Workspace',
+      kind: 'workspace',
+      source: 'existing-match',
+      sourceDetail: 'Exact board inspected.',
+      verifiedAt: '2026-07-20T11:00:00.000Z',
+      existingObjects: [
+        {
+          id: 'board_hq',
+          name: 'Launch HQ',
+          type: 'trello.board',
+          destinationId: 'wsp_aurous',
+          parentId: 'wsp_aurous',
+        },
+        {
+          id: 'list_build',
+          name: 'Build',
+          type: 'trello.list',
+          destinationId: 'wsp_aurous',
+          parentId: 'board_hq',
+        },
+      ],
+      discoveryWarnings: [],
+    };
+    const proposal: PlanProposal = {
+      proposedWorkspaceStructure: [{ kind: 'card', name: 'Wire up CI', purpose: 'Track a task.' }],
+      plannedActions: [
+        {
+          id: 'action-001',
+          operation: 'create',
+          objectType: 'trello.card',
+          target: 'Wire up CI',
+          description: 'Create a new card in the Build list.',
+          properties: [{ key: 'trello.listId', value: 'list_build' }],
+          dependsOn: [],
+        },
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'A new card exists in the Build list.',
+    };
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => planningAgent(discoveryFrom(destination), proposal),
+    });
+
+    const plan = await services.plan({
+      agent: 'mock',
+      tool: 'trello',
+      contextPaths: ['.'],
+      objective: 'Add a Build task card to the launch board',
+    });
+
+    const card = plan.plannedActions.find((action) => action.objectType === 'trello.card');
+    expect(card?.operation).toBe('create');
+    expect(card?.properties.find((property) => property.key === 'trello.listId')?.value).toBe(
+      'list_build',
+    );
+    expect(card?.properties.some((property) => property.key === 'trello.dedupe.knownExternalId')).toBe(
+      false,
+    );
+  });
+
+  it('does not trust a prior Notion run bound to a different destination for exact-ID reuse', async () => {
+    const { workspace, capture, store } = await fixture();
+    const objective = 'Reuse the launch note page in Notion';
+    const priorParentPageId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const priorExternalId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    const priorRunId = 'run-20260720T120000Z-aaaaaa';
+    const priorContext: ContextBundle = {
+      summary: {
+        approvedPaths: [workspace],
+        files: [],
+        fileCount: 0,
+        totalBytes: 0,
+        skipped: [],
+      },
+      documents: [],
+    };
+    const priorPlan: AurousPlan = {
+      schemaVersion: 1,
+      runId: priorRunId,
+      createdAt: '2026-07-20T12:00:00.000Z',
+      agent: 'mock',
+      tool: 'notion',
+      objective,
+      contextSummary: priorContext.summary,
+      proposedWorkspaceStructure: [{ kind: 'page', name: 'Launch note', purpose: 'Root note.' }],
+      plannedActions: [
+        {
+          id: 'action-001',
+          operation: 'create',
+          objectType: 'page',
+          target: 'Launch note',
+          description: 'Create the launch note page.',
+          properties: [{ key: 'notion.destination.parentPageId', value: priorParentPageId }],
+          dependsOn: [],
+        },
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'A launch note page exists.',
+    };
+    await store.createRun(
+      {
+        runId: priorRunId,
+        createdAt: '2026-07-20T12:00:00.000Z',
+        updatedAt: '2026-07-20T12:00:00.000Z',
+        status: 'planning',
+        agent: 'mock',
+        tool: 'notion',
+        objective,
+        approvedContextPaths: [workspace],
+        runKind: 'standard',
+      },
+      priorContext,
+    );
+    await store.savePlan(priorPlan);
+    await store.saveResult(priorRunId, {
+      status: 'succeeded',
+      summary: 'Created the launch note.',
+      createdObjects: [
+        {
+          actionId: 'action-001',
+          type: 'page',
+          name: 'Launch note',
+          externalId: priorExternalId,
+          url: `https://notion.so/${priorExternalId}`,
+        },
+      ],
+      skippedActions: [],
+      completedActionIds: ['action-001'],
+      compatibilityNotes: [],
+      warnings: [],
+      failures: [],
+      startedAt: '2026-07-20T12:00:00.000Z',
+      finishedAt: '2026-07-20T12:00:01.000Z',
+    });
+    await store.updateStatus(priorRunId, 'succeeded');
+
+    const otherDestination: ResolvedDestination = {
+      integration: 'notion',
+      id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      name: 'A different Notion parent',
+      kind: 'page',
+      source: 'existing-match',
+      sourceDetail: 'A different, unrelated Notion parent page.',
+      verifiedAt: '2026-07-21T09:00:00.000Z',
+      existingObjects: [],
+      discoveryWarnings: [],
+    };
+    const reuseProposal: PlanProposal = {
+      proposedWorkspaceStructure: [{ kind: 'page', name: 'Launch note', purpose: 'Reuse note.' }],
+      plannedActions: [
+        {
+          id: 'action-001',
+          operation: 'update',
+          objectType: 'page',
+          target: 'Launch note',
+          description: 'Reuse the existing launch note by its prior ID.',
+          properties: [{ key: 'notion.knownExternalId', value: priorExternalId }],
+          dependsOn: [],
+        },
+      ],
+      assumptions: [],
+      warnings: [],
+      destructiveActions: [],
+      expectedResult: 'The launch note is reused.',
+    };
+    const services = new AurousServices({
+      workspace,
+      store,
+      output: capture.output,
+      agentFactory: () => planningAgent(discoveryFrom(otherDestination), reuseProposal),
+    });
+
+    await expect(
+      services.plan({ agent: 'mock', tool: 'notion', contextPaths: ['.'], objective }),
+    ).rejects.toMatchObject({ code: 'AUR-PLAN-009' });
   });
 
   it('does not apply when confirmation is declined', async () => {

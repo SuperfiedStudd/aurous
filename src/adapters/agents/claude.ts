@@ -1,5 +1,5 @@
 import { execa } from 'execa';
-import { AurousError } from '../../core/errors.js';
+import { AurousCommandError, AurousError } from '../../core/errors.js';
 import { redactText } from '../../core/redact.js';
 import {
   PlanProposalResponseSchema,
@@ -16,7 +16,15 @@ import {
   buildRecoveryActionPrompt,
   buildRecoveryInspectionPrompt,
 } from './prompts.js';
-import { commandFailure, parseJsonPayload, writeManualPrompt, type AgentPhase } from './helpers.js';
+import {
+  commandFailure,
+  extractJsonObject,
+  findMcpServerBlocks,
+  parseJsonPayload,
+  structuredOutputFailure,
+  writeManualPrompt,
+  type AgentPhase,
+} from './helpers.js';
 import type {
   AgentAdapter,
   AgentDiagnostic,
@@ -305,14 +313,116 @@ export class ClaudeAgentAdapter implements AgentAdapter {
         invocationRunId(input),
       );
     }
+    const command = ['claude', ...args];
     return {
-      value: parse(parseJsonPayload(result.stdout)),
-      command: ['claude', ...args],
+      value: classifyClaudeInvocationOutput(
+        parse,
+        phase,
+        command,
+        result.stdout,
+        result.stderr,
+        durationMs,
+        invocationRunId(input),
+      ),
+      command,
       stdout: result.stdout,
       stderr: result.stderr,
       durationMs,
     };
   }
+}
+
+/**
+ * Validates Claude's captured stdout against the transport contract: an is_error envelope or
+ * any schema/JSON failure surfaces as AUR-AGENT-005 with redacted context, never a raw ZodError.
+ */
+export function classifyClaudeInvocationOutput<T>(
+  parse: (value: unknown) => T,
+  phase: AgentPhase,
+  command: string[],
+  stdout: string,
+  stderr: string,
+  durationMs: number,
+  runId: string,
+): T {
+  const envelope = readClaudeErrorEnvelope(stdout);
+  if (envelope) {
+    throw claudeResultEnvelopeFailure(
+      phase,
+      command,
+      stdout,
+      stderr,
+      durationMs,
+      envelope.message,
+      runId,
+    );
+  }
+  try {
+    return parse(parseJsonPayload(stdout));
+  } catch (error) {
+    throw structuredOutputFailure(
+      'Claude Code',
+      phase,
+      command,
+      stdout,
+      stderr,
+      durationMs,
+      error,
+      runId,
+    );
+  }
+}
+
+/**
+ * Detects the Claude `--output-format json` result envelope reporting is_error, so an
+ * exit-zero run that Claude itself flagged as failed is not parsed as structured output.
+ */
+export function readClaudeErrorEnvelope(stdout: string): { message: string } | undefined {
+  const parsed = extractJsonObject(stdout);
+  if (!isRecord(parsed) || parsed.is_error !== true) return undefined;
+  const isResultEnvelope =
+    parsed.type === 'result' ||
+    typeof parsed.result === 'string' ||
+    typeof parsed.subtype === 'string' ||
+    'session_id' in parsed;
+  if (!isResultEnvelope) return undefined;
+  const message =
+    (typeof parsed.result === 'string' && parsed.result.trim()) ||
+    (typeof parsed.error === 'string' && parsed.error.trim()) ||
+    (typeof parsed.subtype === 'string' && parsed.subtype.trim()) ||
+    'Claude Code reported is_error in its result envelope.';
+  return { message };
+}
+
+function claudeResultEnvelopeFailure(
+  phase: AgentPhase,
+  command: string[],
+  stdout: string,
+  stderr: string,
+  durationMs: number,
+  message: string,
+  runId: string,
+): AurousCommandError {
+  return new AurousCommandError({
+    code: 'AUR-AGENT-005',
+    summary: `Claude Code reported an error result during ${phase}.`,
+    probableCause:
+      redactText(message).slice(0, 500) ||
+      'Claude Code set is_error in its result envelope instead of returning structured output.',
+    nextAction:
+      phase === 'destination-discover'
+        ? 'Check the integration connection, then repeat the original request.'
+        : `Run "aurous diagnose ${runId} --verbose" and retry after reviewing the terminal error.`,
+    runId,
+    command,
+    stdout,
+    stderr,
+    durationMs,
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function normalizeExecutionInvocation(
@@ -341,18 +451,21 @@ function invocationRunId(
   return input.recoveryPlan.recoveryRunId;
 }
 
-function claudeMcpReadiness(
+export function claudeMcpReadiness(
   exitCode: number,
   output: string,
   name: 'notion' | 'linear' | 'airtable' | 'trello',
 ): AgentDiagnostic['mcp']['notion'] {
   if (exitCode !== 0)
     return { status: 'unknown', detail: 'Could not inspect Claude Code MCP configuration.' };
-  const line = output
-    .split('\n')
-    .find((candidate) => new RegExp(`\\b${name}\\b`, 'i').test(candidate));
-  if (!line) return { status: 'not-ready', detail: `${name} was not listed by "claude mcp list".` };
-  if (/disabled|failed|error/i.test(line))
-    return { status: 'not-ready', detail: redactText(line.trim()) };
-  return { status: 'ready', detail: redactText(line.trim()) };
+  const blocks = findMcpServerBlocks(output, name);
+  if (blocks.length === 0)
+    return { status: 'not-ready', detail: `${name} was not listed by "claude mcp list".` };
+  let readyDetail: string | undefined;
+  for (const block of blocks) {
+    if (readyDetail === undefined) readyDetail = block.entryLine.trim();
+    const failing = block.lines.find((candidate) => /disabled|failed|error/i.test(candidate));
+    if (failing) return { status: 'not-ready', detail: redactText(failing.trim()) };
+  }
+  return { status: 'ready', detail: redactText(readyDetail ?? '') };
 }

@@ -8,8 +8,11 @@ import { AirtableAdapter } from '../src/adapters/productivity/airtable.js';
 import { LinearAdapter } from '../src/adapters/productivity/linear.js';
 import { NotionAdapter } from '../src/adapters/productivity/notion.js';
 import {
+  exactExternalIdMatches,
   isSyntheticRelationshipTarget,
+  normalizeNullishProperties,
   normalizedObjectType,
+  relationAlreadySatisfied,
   resolveExactObject,
 } from '../src/adapters/productivity/exact-bindings.js';
 import { asAurousError, AurousError } from '../src/core/errors.js';
@@ -702,6 +705,113 @@ describe('exact-ID binding for reuse, update, and relations', () => {
     expect(first?.runId).not.toBe(second?.runId);
     expect(await store.getRun(first!.runId!)).toMatchObject({ status: 'failed' });
     expect(await store.getRun(second!.runId!)).toMatchObject({ status: 'failed' });
+  });
+
+  it('reuses a Notion object when the persisted external ID is dashless but discovery is dashed', () => {
+    const action = {
+      id: 'action-001',
+      operation: 'update' as const,
+      objectType: 'notion.database_record',
+      target: 'README completion',
+      description: 'Reuse the exact checklist gate.',
+      properties: [
+        { key: 'notion.dedupe.knownExternalId', value: '3a2c0122d292815c942cfb042aeb9112' },
+      ],
+      dependsOn: [],
+    };
+    expect(resolveExactObject(notionDestination, action, 'notion')?.id).toBe(
+      '3a2c0122-d292-815c-942c-fb042aeb9112',
+    );
+  });
+
+  it('recognizes a satisfied Notion relation when linked IDs differ only by dash format', () => {
+    const existing = {
+      id: '3a2c0122-d292-815c-942c-fb042aeb9112',
+      name: 'README completion',
+      type: 'page',
+      destinationId: notionDestination.id,
+      parentId: '12d311ca-096e-4f82-8edd-2a438f8f4841',
+      linkedIds: ['3a2c0122d29281edb4f6eab2abb2f67c'],
+    };
+    expect(
+      relationAlreadySatisfied(existing, ['3a2c0122-d292-81ed-b4f6-eab2abb2f67c'], 'notion'),
+    ).toBe(true);
+    // No tool defaults to strict, so a dashless-vs-dashed pair must not match.
+    expect(relationAlreadySatisfied(existing, ['3a2c0122-d292-81ed-b4f6-eab2abb2f67c'])).toBe(false);
+  });
+
+  it('keeps a UUID-shaped non-Notion relation strict across dash and case variants', () => {
+    const existing = {
+      id: 'issue-src',
+      name: 'CSV import',
+      type: 'issue',
+      destinationId: 'team',
+      linkedIds: ['11111111-2222-4333-8444-555555555555'],
+    };
+    expect(
+      relationAlreadySatisfied(existing, ['11111111222243338444555555555555'], 'linear'),
+    ).toBe(false);
+    expect(
+      relationAlreadySatisfied(existing, ['11111111-2222-4333-8444-555555555555'], 'linear'),
+    ).toBe(true);
+  });
+
+  it('keeps non-Notion external IDs case-sensitive while Notion UUIDs stay dash/case aware', () => {
+    expect(exactExternalIdMatches('recAELdj1f2Fnp5gM', 'recAELdj1f2Fnp5gM', 'airtable')).toBe(true);
+    expect(exactExternalIdMatches('recAELdj1f2Fnp5gM', 'RECAELDJ1F2FNP5GM', 'airtable')).toBe(false);
+    expect(
+      exactExternalIdMatches(
+        '3a2c0122-d292-81ed-b4f6-eab2abb2f67c',
+        '3a2c0122d29281edb4f6eab2abb2f67c',
+        'notion',
+      ),
+    ).toBe(true);
+    // Omitting the tool is strict, even for a UUID-shaped pair.
+    expect(
+      exactExternalIdMatches(
+        '3a2c0122-d292-81ed-b4f6-eab2abb2f67c',
+        '3a2c0122d29281edb4f6eab2abb2f67c',
+      ),
+    ).toBe(false);
+    expect(
+      exactExternalIdMatches(
+        '11111111-2222-4333-8444-555555555555',
+        '11111111222243338444555555555555',
+        'linear',
+      ),
+    ).toBe(false);
+  });
+
+  it('strips sentinel values only for identifier-typed keys, keeping value-bearing ones', () => {
+    const normalized = normalizeNullishProperties([
+      { key: 'linear.projectId', value: 'none' },
+      { key: 'linear.milestoneId', value: 'n/a' },
+      { key: 'linear.title', value: 'N/A' },
+      { key: 'notion.property.Status', value: 'None' },
+      { key: 'airtable.recordId', value: 'recAELdj1f2Fnp5gM' },
+      { key: 'linear.labels', value: '' },
+    ]);
+    expect(normalized).toEqual([
+      { key: 'linear.title', value: 'N/A' },
+      { key: 'notion.property.Status', value: 'None' },
+      { key: 'airtable.recordId', value: 'recAELdj1f2Fnp5gM' },
+    ]);
+  });
+
+  it('does not reuse an Airtable record when the persisted ID differs only by case', () => {
+    const action = {
+      id: 'action-001',
+      operation: 'update' as const,
+      objectType: 'airtable.record',
+      target: 'Uninspected name',
+      description: 'Attempt reuse via a case-shifted record ID.',
+      properties: [
+        { key: 'airtable.dedupe.knownExternalId', value: 'RECAELDJ1F2FNP5GM' },
+        { key: 'airtable.recordId', value: 'RECAELDJ1F2FNP5GM' },
+      ],
+      dependsOn: [],
+    };
+    expect(resolveExactObject(airtableDestination, action, 'airtable')).toBeUndefined();
   });
 });
 

@@ -142,8 +142,9 @@ export const AurousPlanSchema = PlanProposalSchema.extend({
   objective: z.string().min(1),
   contextSummary: ContextSummarySchema,
 }).superRefine((plan, context) => {
-  for (const action of plan.plannedActions) {
+  plan.plannedActions.forEach((action, index) => {
     const values = [
+      action.objectType,
       action.target,
       action.description,
       ...action.properties.map((property) => property.value),
@@ -151,11 +152,21 @@ export const AurousPlanSchema = PlanProposalSchema.extend({
     if (values.some(isForbiddenDestinationPlaceholder)) {
       context.addIssue({
         code: 'custom',
-        path: ['plannedActions', action.id],
+        path: ['plannedActions', index],
         message: 'Saved plans cannot contain unresolved destination placeholders.',
       });
     }
-  }
+  });
+  plan.proposedWorkspaceStructure.forEach((item, index) => {
+    const values = [item.name, ...(item.parent ? [item.parent] : [])];
+    if (values.some(isForbiddenDestinationPlaceholder)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['proposedWorkspaceStructure', index],
+        message: 'Saved plans cannot contain unresolved destination placeholders.',
+      });
+    }
+  });
 });
 export type AurousPlan = z.infer<typeof AurousPlanSchema>;
 
@@ -163,7 +174,7 @@ export function isForbiddenDestinationPlaceholder(value: string): boolean {
   const normalized = value
     .trim()
     .toLocaleLowerCase()
-    .replace(/[\s_]+/g, '-');
+    .replace(/[\s_-]+/g, '-');
   return (
     normalized === 'user-selected-parent' ||
     normalized === 'unknown-team' ||

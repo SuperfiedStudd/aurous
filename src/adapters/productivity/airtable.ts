@@ -87,7 +87,7 @@ NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one 
         const linkedIds = parseRelatedIdList(
           propertyValue(bound.properties, 'airtable.linkedRecordIds'),
         );
-        if (existing && relationAlreadySatisfied(existing, linkedIds)) {
+        if (existing && relationAlreadySatisfied(existing, linkedIds, 'airtable')) {
           bound = stampAlreadySatisfiedRelation(bound, 'airtable');
         } else if (hasTypedAirtableRelation(bound)) {
           const binding = parseAirtableRelation(airtableRelationProperty(bound));
@@ -99,7 +99,7 @@ NEW-BASE CONTRACT: The official Airtable create_base tool requires at least one 
               existing ??
               destination.existingObjects.find((object) => object.id === binding.source.recordId);
             const typedLinkedIds = binding.targets.map((target) => target.recordId!);
-            if (source && relationAlreadySatisfied(source, typedLinkedIds)) {
+            if (source && relationAlreadySatisfied(source, typedLinkedIds, 'airtable')) {
               bound = stampExactExternalId(bound, source, 'airtable');
               bound = stampAlreadySatisfiedRelation(bound, 'airtable');
             }
