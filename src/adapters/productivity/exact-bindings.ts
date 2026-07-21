@@ -358,7 +358,6 @@ function normalizeNotionRelationAction(action: PlanAction): PlanAction {
     };
   }
 
-  const kind = normalizedObjectType(action.objectType);
   const sourceId =
     propertyValue(action.properties, 'notion.relation.sourceRecordId') ??
     propertyValue(action.properties, 'notion.dedupe.knownExternalId') ??
@@ -369,8 +368,14 @@ function normalizeNotionRelationAction(action: PlanAction): PlanAction {
   const isRelationShape =
     action.objectType.toLocaleLowerCase().includes('relation') ||
     (Boolean(sourceId) && Boolean(propertyValue(action.properties, 'notion.relation.name'))) ||
-    Boolean(targetId);
-  if (!isRelationShape && kind !== 'database_record' && kind !== 'record') return action;
+    Boolean(targetId) ||
+    Boolean(typedRelation?.trim().startsWith('{'));
+  if (!isRelationShape) {
+    return {
+      ...action,
+      properties: normalizeNullishProperties(action.properties),
+    };
+  }
   if (!sourceId) return action;
 
   const properties = action.properties.filter(

@@ -44,6 +44,15 @@ const notionDestination: ResolvedDestination = {
       parentId: '6dfe13ba-b7d6-4aec-ae28-6c4e408b53a9',
       linkedIds: [],
     },
+    {
+      id: 'prop-milestone-task-db',
+      name: 'Milestone',
+      type: 'notion.property',
+      destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
+      parentId: 'ed157dff-ae92-44cd-af58-a3225dee46d9',
+      identifier: 'relation',
+      linkedIds: ['6dfe13ba-b7d6-4aec-ae28-6c4e408b53a9'],
+    },
   ],
   discoveryWarnings: [],
 };
@@ -66,9 +75,9 @@ describe('Notion identity alias and relation normalization', () => {
         { key: 'notion.relation.sourceRecordId', value: sourceId },
       ]),
     );
-    expect(normalized.properties.some((property) => property.key === 'notion.knownExternalId')).toBe(
-      false,
-    );
+    expect(
+      normalized.properties.some((property) => property.key === 'notion.knownExternalId'),
+    ).toBe(false);
 
     const adapter = new NotionAdapter();
     const bound = adapter.bindDestination(
@@ -435,10 +444,7 @@ async function serviceFixture() {
   return { workspace, store, output };
 }
 
-function planningAgent(
-  discovery: DestinationDiscovery,
-  proposal: PlanProposal,
-): AgentAdapter {
+function planningAgent(discovery: DestinationDiscovery, proposal: PlanProposal): AgentAdapter {
   const mock = new MockAgentAdapter();
   return {
     name: 'mock',

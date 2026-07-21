@@ -159,6 +159,15 @@ const notionDestination: ResolvedDestination = {
       destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
       parentId: 'data-source-other',
     },
+    {
+      id: 'prop-related-task-readme',
+      name: 'Related Task',
+      type: 'notion.property',
+      destinationId: '3a2c0122-d292-8130-bde0-f68012dac01a',
+      parentId: '12d311ca-096e-4f82-8edd-2a438f8f4841',
+      identifier: 'relation',
+      linkedIds: ['74fc2fce-1fa1-481f-a412-4c2e405ada3e'],
+    },
   ],
   discoveryWarnings: [],
 };
